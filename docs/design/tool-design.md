@@ -8,18 +8,19 @@ How the tool is used, and the architecture that follows from it.
 
 ## 1. Use cases → modes
 
-Four business needs, two commands, one engine.
+Five business needs, three commands, one engine.
 
 | Use case | Command | Notes |
 | --- | --- | --- |
-| **Migrate** Claude Code ↔ OpenCode (or any pair) | `agentsync sync --from X --to Y --prune` | One-shot. Generates target files, removes source-provider files. |
-| **Support multiple agents**, keep them in sync in CI | `agentsync sync` (write mode) | Regenerates every target from the canonical source. |
-| **CI gate** — fail the build if files drifted | `agentsync sync --check` | Dry-run; exits non-zero if output ≠ disk. |
+| **Migrate** Claude Code ↔ OpenCode (or any pair) | `agentsync sync --to Y --prune X` | One-shot. Propagates into Y's files, removes X's. |
+| **Support multiple agents**, keep them in sync in CI | `agentsync sync` (write mode) | Reconciles all managed files via 3-way merge (§2); propagates edits. |
+| **CI gate** — fail the build if files are out of sync | `agentsync sync --check` | Dry-run; exits non-zero if any file isn't the reconciled result. |
 | **Restrict to portable context** | `agentsync lint` (compatibility rules) | warn or error per config. |
 | **Enforce best practices** (≤200 lines, etc.) | `agentsync lint` (quality rules) | warn or error per config. |
+| **See/validate what an agent loads** at a path | `agentsync context <path> --as Y` | Assembles the effective context a harness loads there (§8). |
 
-`sync` transforms; `lint` validates; `check` is `sync` in verify mode. That's the
-whole surface.
+`sync` reconciles; `lint` validates; `context` introspects; `check` is `sync` in verify
+mode. That's the whole surface.
 
 ---
 
@@ -270,7 +271,46 @@ files; the natural assertion is "these exact files."
 
 ---
 
-## 8. Decisions (resolved)
+## 8. Context introspection & validation (`agentsync context`)
+
+"Did the sync actually produce equivalent context?" can't be answered by diffing files —
+the files are *supposed* to differ per harness. It's answered by comparing the **effective
+context each harness assembles at a given path**. Native support for that is uneven:
+
+| Harness | Native "what's loaded here" | Machine-readable? |
+| --- | --- | --- |
+| **Claude Code** | `/memory`, `/context`, **`InstructionsLoaded` hook** | ✅ hook is programmatic |
+| **OpenCode** | `opencode debug config`, `opencode debug agent build` | ⚠️ config-level; rule visibility partial **[verify]** |
+| **Codex** | TUI/session logs (`codex -c log_dir=…`) or ask-the-model probe | ⚠️ logs only; probe non-deterministic |
+| **Cursor** | GUI "Rules" indicator only | ❌ no headless equivalent |
+
+Only Claude Code answers cleanly and programmatically; Cursor can't answer headlessly at
+all. So the tool provides its own, deterministic:
+
+```
+agentsync context <path> --as <harness>     # print the effective, assembled context
+agentsync context <path> --diff             # all harnesses side by side at that path
+```
+
+It replays each read-adapter plus that harness's own assembly rules (walk direction,
+concat vs override, glob/`paths` matching, on-demand subdir loading — research + §3.1) to
+produce the fully-resolved context a harness *would* load at `<path>`. Two uses:
+
+1. **Validation oracle.** After a sync, the effective context at a path should be
+   equivalent across harnesses **modulo the declared fidelity losses** (functionality-map
+   §4). A fixture asserts this, so "the sync worked" is a checkable property, not just
+   "bytes were written."
+2. **Docs.** Render the compiled context per harness at a location, side by side — the
+   "contrast the compiled context at a specific place" view.
+
+**Calibration.** Where a harness *is* machine-readable (Claude's hook + `/memory`,
+`opencode debug config`, Codex session logs) we periodically diff our computed context
+against the real one to keep adapters honest. Cursor has no headless introspection, so for
+Cursor the tool is the *only* way to see effective context in CI — a gap we fill outright.
+
+---
+
+## 9. Decisions (resolved)
 
 1. **Sync model** — ✅ **bidirectional**, via a lockfile-based 3-way merge (§2). Any file
    may be edited; edits propagate; divergent edits to the same block are conflicts resolved
