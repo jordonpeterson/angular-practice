@@ -1,40 +1,30 @@
 # AI Coding-Agent Context Files: Cross-Provider Equivalencies
 
-Research notes for building a tool that converts persistent AI-agent context between
-**Claude Code**, **OpenAI Codex**, **Cursor**, and **OpenCode**.
+Research notes for a tool that converts persistent agent context between **Claude Code**, **OpenAI Codex**, **Cursor**, and **OpenCode**.
 
-*Compiled July 2026. Providers change these conventions often — every claim below is
-linked to a source at the bottom, and the "Verify before shipping" section lists the
-facts most likely to drift.*
+*Compiled July 2026. Conventions drift; every claim is sourced below, and §6 lists the facts most likely to have changed.*
 
 ---
 
 ## 1. The big picture
 
-There are really **three design philosophies** in play, and every provider is some
-mix of them:
+Three design philosophies; each provider mixes them:
 
 | Philosophy | What it looks like | Who uses it |
 | --- | --- | --- |
-| **A. Single memory file, concatenated up the tree** | One well-known filename (`CLAUDE.md` / `AGENTS.md`) discovered by walking the directory tree; all matches are concatenated into context. Plain Markdown. | Claude Code, Codex, OpenCode |
-| **B. The open `AGENTS.md` standard** | A vendor-neutral `AGENTS.md` that many tools agree to read, so one file serves several agents. Plain Markdown. | Codex, Cursor, OpenCode, + ~20 others |
-| **C. Structured, glob-scoped rule packs** | A directory of small rule files with YAML frontmatter that scopes each rule to file globs and activation modes. | Cursor (`.cursor/rules/*.mdc`), Claude Code (`.claude/rules/*.md`) |
+| **A. Single memory file, concatenated up the tree** | One well-known filename (`CLAUDE.md` / `AGENTS.md`) discovered by walking the directory tree; all matches concatenated. Plain Markdown. | Claude Code, Codex, OpenCode |
+| **B. The open `AGENTS.md` standard** | A vendor-neutral `AGENTS.md` many tools read, so one file serves several agents. Plain Markdown. | Codex, Cursor, OpenCode, + ~20 others |
+| **C. Structured, glob-scoped rule packs** | A directory of small rule files with YAML frontmatter scoping each to file globs and activation modes. | Cursor (`.cursor/rules/*.mdc`), Claude Code (`.claude/rules/*.md`) |
 
-The key insight for a conversion tool: **most content is portable Markdown, but the
-*scoping* metadata (which rule applies to which files, and when) is where providers
-diverge and where conversion becomes lossy.**
-
-A second key insight: **`AGENTS.md` is the closest thing to a lingua franca.** Codex,
-Cursor, and OpenCode all read it natively; Claude Code is the notable holdout (it reads
-only `CLAUDE.md`, but the official guidance is to `@import` or symlink `AGENTS.md`).
-That makes `AGENTS.md` the natural canonical/interchange format for the tool.
+Key insights for conversion:
+- Most content is portable Markdown; the **scoping metadata** (which rule applies to which files, when) is where providers diverge and conversion goes lossy.
+- **`AGENTS.md` is the lingua franca.** Codex, Cursor, and OpenCode read it natively; Claude Code is the holdout (reads only `CLAUDE.md`; official guidance is to `@import` or symlink `AGENTS.md`). So `AGENTS.md` is the natural canonical/interchange format.
 
 ---
 
 ## 2. Master equivalency chart
 
-The core question the tool must answer: *"For concept X in provider P, what is the
-equivalent in provider Q?"*
+Core question: *"For concept X in provider P, what is the equivalent in Q?"*
 
 | Concept | Claude Code | OpenAI Codex | Cursor | OpenCode |
 | --- | --- | --- | --- | --- |
@@ -60,246 +50,159 @@ equivalent in provider Q?"*
 
 ### 3.1 Claude Code — `CLAUDE.md`
 
-**Format:** plain Markdown. `<!-- HTML comments -->` at block level are stripped before
-injection (useful for maintainer notes that shouldn't cost tokens).
+- **Format:** plain Markdown. Block-level `<!-- HTML comments -->` are stripped before injection.
+- **Locations, broadest → most specific:**
+  1. **Managed policy** — `/Library/Application Support/ClaudeCode/CLAUDE.md` (macOS), `/etc/claude-code/CLAUDE.md` (Linux/WSL), `C:\Program Files\ClaudeCode\CLAUDE.md` (Windows). Not user-overridable. Can be inlined via `claudeMd` in `managed-settings.json`.
+  2. **User** — `~/.claude/CLAUDE.md` and `~/.claude/rules/*.md`.
+  3. **Project** — `./CLAUDE.md` **or** `./.claude/CLAUDE.md` (committed).
+  4. **Local** — `./CLAUDE.local.md` (gitignored).
+- **Loading:** walk up from cwd collecting every `CLAUDE.md` + `CLAUDE.local.md`; all **concatenated** (not overridden), ordered root→cwd, `CLAUDE.local.md` after `CLAUDE.md` at each level. Nested `CLAUDE.md` *below* cwd load on demand, not at launch.
+- **Path-scoped rules:** `.claude/rules/*.md` (recursive). Optional YAML frontmatter:
 
-**Locations, in load order (broadest → most specific):**
+  ```markdown
+  ---
+  paths:
+    - "src/api/**/*.ts"
+  ---
+  # API rules
+  - All endpoints must validate input.
+  ```
 
-1. **Managed policy** — `/Library/Application Support/ClaudeCode/CLAUDE.md` (macOS),
-   `/etc/claude-code/CLAUDE.md` (Linux/WSL), `C:\Program Files\ClaudeCode\CLAUDE.md`
-   (Windows). Cannot be overridden by users. Can also be inlined via the `claudeMd`
-   key in `managed-settings.json`.
-2. **User** — `~/.claude/CLAUDE.md` and `~/.claude/rules/*.md` (all projects).
-3. **Project** — `./CLAUDE.md` **or** `./.claude/CLAUDE.md` (committed, team-shared).
-4. **Local** — `./CLAUDE.local.md` (gitignored personal overrides).
+  Rules without `paths` load unconditionally (same priority as `.claude/CLAUDE.md`); rules with `paths` load only when Claude touches a matching file. Analogue to Cursor's `globs`.
+- **Imports:** `@path/to/file` expands at launch (max depth 4 hops, relative to importing file; skips code spans/fenced blocks). Recommended bridge to `AGENTS.md`:
 
-**Loading algorithm:** walk up the directory tree from cwd, collecting every `CLAUDE.md`
-and `CLAUDE.local.md`. All are **concatenated** (not overridden), ordered filesystem-root
-→ cwd, with `CLAUDE.local.md` appended after `CLAUDE.md` at each level. Nested `CLAUDE.md`
-files *below* cwd are **not** loaded at launch — they load on demand when Claude reads a
-file in that subdirectory.
+  ```markdown
+  @AGENTS.md
 
-**Path-scoped rules:** `.claude/rules/*.md` (discovered recursively). Optional YAML
-frontmatter:
+  ## Claude Code
+  Use plan mode for changes under `src/billing/`.
+  ```
 
-```markdown
----
-paths:
-  - "src/api/**/*.ts"
----
-# API rules
-- All endpoints must validate input.
-```
-
-Rules **without** a `paths` field load unconditionally (same priority as
-`.claude/CLAUDE.md`). Rules **with** `paths` load only when Claude touches a matching
-file. This is Claude Code's analogue to Cursor's `globs`.
-
-**Imports:** `@path/to/file` syntax expands and loads the referenced file at launch
-(max depth 4 hops; relative to the importing file). Import parsing skips code spans and
-fenced blocks. This is the officially recommended bridge to `AGENTS.md`:
-
-```markdown
-@AGENTS.md
-
-## Claude Code
-Use plan mode for changes under `src/billing/`.
-```
-
-**`AGENTS.md` compatibility:** Claude Code does **not** read `AGENTS.md` directly. Options:
-`@AGENTS.md` import, or `ln -s AGENTS.md CLAUDE.md`. `/init` reads an existing `AGENTS.md`
-(plus `.cursorrules`, `.devin/rules/`, `.windsurfrules`) and folds it into a generated
-`CLAUDE.md`.
-
-**Not context (but worth knowing):** *Auto memory* at
-`~/.claude/projects/<project>/memory/MEMORY.md` is Claude-authored, not user-authored, so
-the sync tool should ignore it.
-
-**Exclusions:** `claudeMdExcludes` (glob) in settings skips ancestor `CLAUDE.md` files in
-monorepos.
+- **`AGENTS.md` compatibility:** not read directly. Use `@AGENTS.md` import or `ln -s AGENTS.md CLAUDE.md`. `/init` reads existing `AGENTS.md` (plus `.cursorrules`, `.devin/rules/`, `.windsurfrules`) into a generated `CLAUDE.md`.
+- **Not context:** *Auto memory* at `~/.claude/projects/<project>/memory/MEMORY.md` is Claude-authored — sync tool should ignore it.
+- **Exclusions:** `claudeMdExcludes` (glob) skips ancestor `CLAUDE.md` files in monorepos.
 
 ### 3.2 OpenAI Codex — `AGENTS.md`
 
-**Format:** plain Markdown.
-
-**Locations & filenames.** In each directory Codex checks, in order, and takes **at most
-one file per directory**:
-
-1. `AGENTS.override.md`
-2. `AGENTS.md`
-3. fallbacks from `project_doc_fallback_filenames` (e.g. `TEAM_GUIDE.md`, `.agents.md`)
-
-**Scopes:**
-- **Global:** `~/.codex/AGENTS.md` (and `~/.codex/AGENTS.override.md` for temporary global
-  overrides).
-- **Project & nested:** `AGENTS.md` at the repo root and in any subdirectory.
-
-**Loading algorithm:** Codex walks from the **project root down to cwd**, taking one file
-per directory, and **concatenates** them joined by blank lines. Files closer to cwd appear
-**later**, so they override earlier guidance. `AGENTS.override.md` in a directory beats
-that directory's `AGENTS.md`.
-
-**Size limit:** combined docs are capped by `project_doc_max_bytes` (~32 KiB by default;
-configurable in `~/.codex/config.toml`). Empty files are skipped; once the cap is hit,
-no more files are added. **This is a hard constraint the tool must respect** — a large
-`CLAUDE.md` can silently truncate when converted to Codex.
-
-**Config file:** `~/.codex/config.toml` holds `project_doc_max_bytes`,
-`project_doc_fallback_filenames`, etc. It configures discovery but is not itself context.
-
-**No glob-scoped rules and no imports** — Codex relies purely on file nesting + overrides.
-This is the biggest structural gap when converting Cursor `.mdc` rules → Codex.
+- **Format:** plain Markdown.
+- **Per-directory pick (at most one), in order:** 1. `AGENTS.override.md`  2. `AGENTS.md`  3. fallbacks from `project_doc_fallback_filenames` (e.g. `TEAM_GUIDE.md`, `.agents.md`).
+- **Scopes:** Global `~/.codex/AGENTS.md` (+ `~/.codex/AGENTS.override.md`); project + nested `AGENTS.md` at root and any subdirectory.
+- **Loading:** walk **root → cwd**, one file per directory, **concatenated** (blank-line joined). Files closer to cwd appear later and override. `AGENTS.override.md` beats that directory's `AGENTS.md`.
+- **Size limit:** capped by `project_doc_max_bytes` (~32 KiB default; set in `~/.codex/config.toml`). Empty files skipped; once cap hit, no more files added. **Hard constraint** — a large `CLAUDE.md` can silently truncate when converted.
+- **Config file:** `~/.codex/config.toml` holds `project_doc_max_bytes`, `project_doc_fallback_filenames`, etc. Configures discovery; not itself context.
+- **No glob rules, no imports** — pure file nesting + overrides. Biggest gap when converting Cursor `.mdc` → Codex.
 
 ### 3.3 Cursor — `.cursor/rules/*.mdc` (+ `AGENTS.md`)
 
-The richest and most structured of the four.
+Richest and most structured.
 
-**Three formats it reads:**
-1. **Project Rules** — `.cursor/rules/*.mdc` (current, recommended).
-2. **`AGENTS.md`** — plain-Markdown alternative, supported at root and in nested subdirs
-   (nearest-file-wins).
-3. **`.cursorrules`** — single root file, **deprecated** (Cursor ≥ 0.43) but still read.
+- **Three formats read:**
+  1. **Project Rules** — `.cursor/rules/*.mdc` (current, recommended).
+  2. **`AGENTS.md`** — plain-Markdown alternative, root + nested (nearest-file-wins).
+  3. **`.cursorrules`** — single root file, **deprecated** (Cursor ≥ 0.43) but still read.
+- **`.mdc` format** = Markdown + YAML frontmatter (`description`, `globs`, `alwaysApply`):
 
-**`.mdc` format** = Markdown + YAML frontmatter with three fields:
+  ```markdown
+  ---
+  description: Standards for API route handlers
+  globs: services/api/**/*.ts
+  alwaysApply: false
+  ---
+  - Validate all inputs with zod.
+  - Return the standard error envelope.
+  ```
 
-```markdown
----
-description: Standards for API route handlers
-globs: services/api/**/*.ts
-alwaysApply: false
----
-- Validate all inputs with zod.
-- Return the standard error envelope.
-```
+- **Four activation modes** (defining feature; hardest to represent elsewhere):
 
-**Four activation modes** (this is Cursor's defining feature and the hardest thing to
-represent in other tools):
+  | Mode | Frontmatter | Behavior |
+  | --- | --- | --- |
+  | **Always** | `alwaysApply: true` | Injected into every request. |
+  | **Auto Attached** | `globs: <pattern>` | Injected when a matching file is in context. |
+  | **Agent Requested** | `description:` set, `alwaysApply: false`, no globs | Agent decides based on description. |
+  | **Manual** | none of the above | Only when `@ruleName` referenced. |
 
-| Mode | Frontmatter | Behavior |
-| --- | --- | --- |
-| **Always** | `alwaysApply: true` | Injected into every request. |
-| **Auto Attached** | `globs: <pattern>` | Injected when a matching file is in context. |
-| **Agent Requested** | `description:` set, `alwaysApply: false`, no globs | Agent decides whether to pull it in, based on the description. |
-| **Manual** | none of the above | Only when `@ruleName` is explicitly referenced. |
-
-**Scopes / precedence:** Team Rules (dashboard) → Project Rules (`.cursor/rules/`) → User
-Rules (Cursor Settings UI — plain text, all projects, **not a repo file**). All applicable
-rules merge; earlier sources win on conflict.
-
-**Nesting:** `.cursor/rules/` can live in subdirectories, but the idiomatic Cursor pattern
-is to keep rules central and scope them with `globs` rather than nesting.
+- **Scopes / precedence:** Team Rules (dashboard) → Project Rules (`.cursor/rules/`) → User Rules (Settings UI — plain text, all projects, not a repo file). All applicable rules merge; earlier sources win on conflict.
+- **Nesting:** `.cursor/rules/` can be nested, but idiomatic pattern keeps rules central and scopes via `globs`.
 
 ### 3.4 OpenCode — `AGENTS.md` (+ `opencode.json`)
 
-**Format:** plain Markdown. `/init` generates the file.
+- **Format:** plain Markdown. `/init` generates it.
+- **Discovery (first match wins per category):**
+  1. **Local:** walk up cwd → git worktree root loading `AGENTS.md` and `CLAUDE.md`; also project `.opencode/`.
+  2. **Global:** `~/.config/opencode/AGENTS.md`.
+  3. **Claude Code fallback:** `~/.claude/CLAUDE.md` (unless disabled).
+- **Precedence:** if both `AGENTS.md` and `CLAUDE.md` exist, **only `AGENTS.md` is used**. `~/.config/opencode/AGENTS.md` beats `~/.claude/CLAUDE.md`. This Claude compatibility makes OpenCode the easiest target.
+- **`opencode.json` `instructions` field** — pointer/import mechanism accepting local paths, **globs**, and **remote URLs** (5 s fetch timeout), combined with `AGENTS.md`:
 
-**Discovery order (first match wins per category):**
-1. **Local:** walk up from cwd to the git worktree root, loading `AGENTS.md` and
-   `CLAUDE.md` along the way; also project `.opencode/`.
-2. **Global:** `~/.config/opencode/AGENTS.md`.
-3. **Claude Code fallback:** `~/.claude/CLAUDE.md` (unless disabled).
+  ```json
+  {
+    "$schema": "https://opencode.ai/config.json",
+    "instructions": ["CONTRIBUTING.md", "docs/guidelines.md", ".cursor/rules/*.md"]
+  }
+  ```
 
-**Precedence:** if both `AGENTS.md` and `CLAUDE.md` exist, **only `AGENTS.md` is used**.
-`~/.config/opencode/AGENTS.md` beats `~/.claude/CLAUDE.md`. This built-in Claude Code
-compatibility means OpenCode is the easiest target — it can often consume Claude's files
-directly.
-
-**`opencode.json` `instructions` field** — the pointer/import mechanism. It accepts local
-paths, **glob patterns**, and **remote URLs** (5 s fetch timeout), all combined with the
-`AGENTS.md` content:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "instructions": ["CONTRIBUTING.md", "docs/guidelines.md", ".cursor/rules/*.md"]
-}
-```
-
-Notice it can point straight at Cursor rule files — OpenCode is designed to reuse other
-tools' context rather than duplicate it.
+  Can point straight at Cursor rule files — designed to reuse other tools' context.
 
 ---
 
-## 4. Concept-by-concept mapping (the tool's conversion table)
+## 4. Concept-by-concept mapping (the conversion table)
 
 ### 4.1 Project-root instructions
-Trivially portable — the same Markdown body lives in `CLAUDE.md`, `AGENTS.md`, or a
-root `.mdc`. **Canonical = `AGENTS.md`.** For Claude Code, either emit `CLAUDE.md` with
-`@AGENTS.md` + Claude-specific tail, or emit `CLAUDE.md` as a full copy.
+Trivially portable — same Markdown body in `CLAUDE.md`, `AGENTS.md`, or a root `.mdc`. **Canonical = `AGENTS.md`.** For Claude Code, emit `CLAUDE.md` with `@AGENTS.md` + Claude-specific tail, or as a full copy.
 
 ### 4.2 Path/glob scoping (the hard one)
 
 | Source | Mechanism | → Target mapping |
 | --- | --- | --- |
-| Cursor `globs: src/**` | `.mdc` frontmatter | → Claude `.claude/rules/x.md` with `paths: ["src/**"]` (clean). → Codex: **lossy** — must become a nested `AGENTS.md` in `src/`, and only if the glob is a clean directory prefix. → OpenCode: `opencode.json instructions` glob or nested `AGENTS.md`. |
+| Cursor `globs: src/**` | `.mdc` frontmatter | → Claude `.claude/rules/x.md` with `paths: ["src/**"]` (clean). → Codex: **lossy** — nested `AGENTS.md` in `src/`, only if glob is a clean directory prefix. → OpenCode: `opencode.json instructions` glob or nested `AGENTS.md`. |
 | Claude `paths:` rule | frontmatter | → Cursor `globs`. → Codex/OpenCode: nested file if directory-shaped. |
 | Codex nested `AGENTS.md` in `src/` | directory nesting | → Cursor `globs: src/**`. → Claude nested `CLAUDE.md` or `paths` rule. |
 
-**Rule of thumb:** glob ⇄ frontmatter is clean between Cursor and Claude Code; converting
-*either* into Codex (which has no glob rules) requires collapsing to directory nesting and
-only works when the glob is a directory prefix like `src/api/**`. Arbitrary globs
-(`**/*.test.ts`) have **no faithful Codex representation** — the tool must warn.
+**Rule of thumb:** glob ⇄ frontmatter is clean between Cursor and Claude Code; converting either into Codex (no glob rules) requires collapsing to directory nesting, only works for directory-prefix globs like `src/api/**`. Arbitrary globs (`**/*.test.ts`) have **no faithful Codex representation** — warn.
 
 ### 4.3 Activation modes (Cursor-only)
-Cursor's *Agent Requested* and *Manual* modes have no equivalent anywhere else. When
-converting **to** other tools, *Always*/*Auto-Attached* rules translate; *Agent
-Requested*/*Manual* rules should either be dropped with a warning or force-included
-(changing their semantics — flag it).
+*Agent Requested* and *Manual* have no equivalent elsewhere. Converting out: *Always*/*Auto-Attached* translate; *Agent Requested*/*Manual* should be dropped with a warning or force-included (changing semantics — flag it).
 
 ### 4.4 Personal vs. committed
-`CLAUDE.local.md` ⇄ `AGENTS.override.md` (Codex) are the closest pair. Cursor and OpenCode
-have no committed-repo "local override" file (Cursor uses the Settings UI; OpenCode uses
-global). The tool should treat local/override files as a separate, non-synced layer by
-default.
+`CLAUDE.local.md` ⇄ `AGENTS.override.md` (Codex) are the closest pair. Cursor and OpenCode have no committed "local override" file (Cursor uses Settings UI; OpenCode uses global). Treat local/override as a separate, non-synced layer by default.
 
 ### 4.5 Includes / imports
 
 | Provider | Mechanism | Portable? |
 | --- | --- | --- |
-| Claude Code | `@path` (max 4 hops) | Expand inline when targeting Codex (no imports). |
+| Claude Code | `@path` (max 4 hops) | Expand inline when targeting Codex. |
 | OpenCode | `opencode.json instructions` (globs, URLs) | Expand inline for others. |
 | Codex | none | Must inline everything. |
 | Cursor | `@rule` / `@file` refs | Expand inline for others. |
 
-**Conversion strategy:** resolve/flatten all imports into a single canonical document,
-then re-emit per-provider (re-introducing imports only where supported).
+**Strategy:** resolve/flatten all imports into one canonical document, then re-emit per-provider (re-introducing imports only where supported).
 
 ### 4.6 Size limits
-Codex's ~32 KiB `project_doc_max_bytes` is the tightest hard cap. The tool should measure
-the flattened canonical doc and **fail `check` with a clear error** if a Codex target
-would truncate, suggesting the user split content into nested/scoped files.
+Codex's ~32 KiB `project_doc_max_bytes` is the tightest hard cap. Measure the flattened canonical doc and **fail `check` with a clear error** if a Codex target would truncate; suggest splitting into nested/scoped files.
 
 ---
 
 ## 5. Proposed canonical model for the tool
 
-1. **Canonical format = `AGENTS.md`-style Markdown** with an optional lightweight
-   frontmatter superset capturing `scope` (path globs) and `applies-to` (which providers).
-2. **Flatten** all imports/includes into the canonical doc during ingest.
-3. **Represent scoping abstractly** as (glob pattern → Markdown block), then lower to each
-   provider:
+1. **Canonical = `AGENTS.md`-style Markdown** with optional lightweight frontmatter superset capturing `scope` (path globs) and `applies-to` (providers).
+2. **Flatten** all imports/includes into the canonical doc on ingest.
+3. **Represent scoping abstractly** as (glob → Markdown block), then lower per provider:
    - Cursor → `.mdc` `globs`
    - Claude Code → `.claude/rules/*.md` `paths`
    - Codex → nested `AGENTS.md` (only if directory-prefix glob; else warn)
    - OpenCode → nested `AGENTS.md` + `opencode.json instructions`
-4. **Emit a lossiness report** for anything that can't round-trip (arbitrary globs into
-   Codex, Cursor Agent-Requested/Manual modes, size overflow).
-5. **`check` mode** (CI): regenerate in memory, diff against on-disk files, exit non-zero
-   on drift.
+4. **Emit a lossiness report** for anything that can't round-trip (arbitrary globs into Codex, Cursor Agent-Requested/Manual modes, size overflow).
+5. **`check` mode** (CI): regenerate in memory, diff against disk, exit non-zero on drift.
 
 ---
 
 ## 6. Verify before shipping (facts most likely to have drifted)
 
-- Codex `project_doc_max_bytes` default: sources disagree between **32 KiB** and **64 KiB
-  (65536)**. Confirm against the running `codex` version's `config.toml` defaults.
+- Codex `project_doc_max_bytes` default: sources disagree between **32 KiB** and **64 KiB (65536)**. Confirm against the running `codex` version.
 - Codex fallback filename list (`TEAM_GUIDE.md`, `.agents.md`) is configurable and may vary.
-- Cursor's exact precedence wording (Team → Project → User) and whether `AGENTS.md` and
-  `.mdc` rules are additive or exclusive when both exist.
-- OpenCode's "first match wins per category" — confirm whether a project `AGENTS.md`
-  fully suppresses a sibling `CLAUDE.md` or merges.
-- Claude Code `.claude/rules/` `paths` frontmatter is relatively new; confirm the minimum
-  version your CI targets.
+- Cursor's exact precedence wording (Team → Project → User) and whether `AGENTS.md` and `.mdc` rules are additive or exclusive when both exist.
+- OpenCode's "first match wins per category" — confirm whether a project `AGENTS.md` fully suppresses a sibling `CLAUDE.md` or merges.
+- Claude Code `.claude/rules/` `paths` frontmatter is relatively new; confirm the minimum version your CI targets.
 
 ---
 
