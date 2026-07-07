@@ -195,11 +195,11 @@ with each other. Override in `agentsync.toml`:
 providers = ["claude-code", "cursor", "opencode"]  # which files to manage
 compatibility = "portable"                          # off | portable (LCD) | strict
 
-[versions]                                # target version ranges (§9)
-claude-code = ">=2.1.198"                 # behavior is resolved against these
-cursor      = ">=2.2 <3.0.16 || >3.0.16"  # exclude a known-broken build
-codex       = "*"
-# omit or set "detect" to read installed CLI versions instead of pinning
+[versions]                                # optional; defaults to "latest" for every provider (§9)
+# current scope targets latest-only, so this can be omitted entirely
+# claude-code = ">=2.1.198"               # ranges/pins are supported when multi-version matters
+# cursor      = ">=2.2 <3.0.16 || >3.0.16"# (exclude a known-broken build) — future use
+# set "detect" to resolve installed CLI versions instead
 
 [conflict]
 strategy = "fail"                       # fail | priority | markers | newest
@@ -317,6 +317,11 @@ Cursor the tool is the *only* way to see effective context in CI — a gap we fi
 ---
 
 ## 9. Version-aware behavior
+
+> **Current scope:** we target the **latest** version of each harness as of today and ship
+> capability data for those versions only. The model below is built version-aware so more
+> versions slot in later **without rework** — but we do not author historical version data
+> now. `[versions]` defaults to `latest`; everything resolves to a single version set.
 
 Harness behavior is **version-dependent**, and these tools ship weekly. Real examples:
 
