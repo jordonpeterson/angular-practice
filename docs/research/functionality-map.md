@@ -204,11 +204,13 @@ unless explicitly configured — they're where two harnesses legitimately *shoul
 
 ### C9 — Size / truncation
 
-Only **Codex** has a hard cap: `project_doc_max_bytes` (~32 KiB default **[verify]**;
-some builds report 64 KiB). It **silently stops** adding files once the cap is hit. A large
+Only **Codex** has a hard cap: `project_doc_max_bytes`, **32 KiB by default** (the `65536`
+seen in the wild is a documented *override* example in `~/.codex/config.toml`, not a
+changed default). It **silently stops** adding files once the cap is hit. A large
 `CLAUDE.md` that converts fine byte-wise can be **truncated at load** by Codex. The tool
-measures the flattened per-directory total and raises `size-within-codex-cap` before Codex
-would drop content, suggesting a split into nested files.
+measures the flattened per-directory total against the *targeted* Codex config and raises
+`size-within-codex-cap` before Codex would drop content, suggesting a split into nested
+files.
 
 ### C10 — Remote / URL includes
 
@@ -282,6 +284,30 @@ size cap). **The two hardest conversion directions are therefore anything → Co
 flatten and may truncate) and Cursor-only features → anyone (must drop).** Claude Code and
 OpenCode sit in the middle and interconvert cleanly.
 
+### 5.1 The matrix is version-scoped
+
+Every ✅ above is really "✅ **as of some version**." These tools ship constantly and the
+cells move. Documented movement to date:
+
+| Harness | Capability | Version behavior |
+| --- | --- | --- |
+| Claude Code | C2 `paths` matching via symlinks | added **v2.1.198** |
+| Claude Code | (auto memory — adjacent) | added **v2.1.59** |
+| Cursor | legacy `.cursorrules` | deprecated ~**0.43** |
+| Cursor | `.cursor/rules/` layout | rules become **folders** as of **2.2** |
+| Cursor | C3 `alwaysApply` | **3.0.16** regression: treated as "requestable", not auto-injected |
+| Codex | C9 `project_doc_max_bytes` | default 32 KiB; fallback filename list is config-driven, has shifted |
+| OpenCode | C1/C7 discovery | AGENTS.md + `instructions` recent; `.opencode/AGENTS.md` still landing |
+
+Consequence for this map: a capability is `feature → [ {version-range → behavior} ]`, not a
+boolean. Conversions, lint, and `context` assembly all resolve against the **targeted**
+version(s) (design §9). Portability across a declared version *range* is the **intersection**
+of that capability over every version in the range — e.g. a repo targeting Cursor `>=2.0`
+can't assume folder-rules (2.2+) and should avoid `alwaysApply` reliance if `3.0.16` is in
+range. The C-code fixtures (§7) are therefore parameterized by version where behavior
+differs (`c3-cursor3016-alwaysapply-regression`, etc.), and the conformance probe re-derives
+these cells from the real CLIs so the table self-heals as tools ship.
+
 ---
 
 ## 6. Canonical (interchange) feature set
@@ -330,7 +356,6 @@ doesn't actually have** — it's all the same source.
   instruction-file globbing.
 - **[C7/Cursor]** Reliability of nested `.cursor/rules/` subdirectories (community reports
   say flat-only); confirm current behavior.
-- **[C9/Codex]** `project_doc_max_bytes` default — 32 KiB vs 64 KiB across versions.
 - **[C3/Cursor]** Exact trigger semantics of Agent-Requested (how the `description` is used).
 
 ## 9. Adjacent surfaces (future scope, not v1)

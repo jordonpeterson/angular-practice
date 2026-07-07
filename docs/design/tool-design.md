@@ -195,6 +195,12 @@ with each other. Override in `agentsync.toml`:
 providers = ["claude-code", "cursor", "opencode"]  # which files to manage
 compatibility = "portable"                          # off | portable (LCD) | strict
 
+[versions]                                # target version ranges (§9)
+claude-code = ">=2.1.198"                 # behavior is resolved against these
+cursor      = ">=2.2 <3.0.16 || >3.0.16"  # exclude a known-broken build
+codex       = "*"
+# omit or set "detect" to read installed CLI versions instead of pinning
+
 [conflict]
 strategy = "fail"                       # fail | priority | markers | newest
 priority = ["agents-md", "claude-code"] # used when strategy = "priority"
@@ -310,7 +316,61 @@ Cursor the tool is the *only* way to see effective context in CI — a gap we fi
 
 ---
 
-## 9. Decisions (resolved)
+## 9. Version-aware behavior
+
+Harness behavior is **version-dependent**, and these tools ship weekly. Real examples:
+
+| Harness | Version-sensitive behavior |
+| --- | --- |
+| **Claude Code** | `.claude/rules/` `paths` matching through symlinks: **v2.1.198+**. Auto memory: **v2.1.59+**. `.claude/CLAUDE.md` project location and `.claude/rules/` were added over the 2.x line. |
+| **Cursor** | `.cursorrules` deprecated ~**0.43**. New rules created as **folders** in `.cursor/rules/` as of **2.2**. **3.0.16** regression: `alwaysApply: true` silently treated as "requestable" (not auto-injected). |
+| **Codex** | `project_doc_max_bytes` default 32 KiB (configurable); fallback filename list is config-driven and has shifted. |
+| **OpenCode** | AGENTS.md + `opencode.json instructions` are recent; `.opencode/AGENTS.md` discovery is still landing. |
+
+So "does feature X work" is meaningless without a version. The model:
+
+### 9.1 Capabilities are versioned
+
+The adapter-capability table (§3.2) is not `feature → bool`; it's
+`feature → [ {version-range, behavior} ]`. Each entry records introduced-in / changed-in /
+deprecated-in / removed-in, with a source. The engine resolves the **targeted** version(s)
+to a concrete capability set before doing any conversion, lint, or `context` assembly.
+
+### 9.2 Targeting: pin or detect
+
+`[versions]` in config pins ranges (reproducible, the CI default). Alternatively `detect`
+reads installed CLI versions (`claude --version`, `codex --version`, `opencode --version`,
+Cursor build). Pinned versions are written into `agentsync.lock` so a sync is reproducible
+regardless of what's installed on a given machine — versions are an **explicit input**, not
+ambient state (preserves determinism, §4.3).
+
+### 9.3 Portability is across the version *range*, not just across harnesses
+
+When a target is a range (`cursor = ">=2.0"`), the portable/LCD feature set is the
+**intersection over every version in the range**. If `.cursor/rules/`-as-folders only works
+at ≥2.2, then a repo targeting `>=2.0` can't rely on it. The `compatibility` linter reads
+the resolved range, so "portable" means "portable across the harnesses **and versions** you
+declared." Known-broken builds can be excluded (the `!= 3.0.16` example above).
+
+### 9.4 Conformance probing keeps the data honest
+
+Curated capability data drifts as tools ship. Because the e2e harness already drives the
+real CLIs as black boxes (§7), the same fixtures double as a **conformance probe**: run an
+actual installed harness version against probe fixtures, observe its behavior, and emit a
+capability profile for that version. This (a) self-updates the versioned table from ground
+truth, and (b) acts as a **regression alarm** — a scheduled probe against the latest release
+catches the day a new version changes behavior (exactly the Cursor 3.0.16 case). This is the
+concrete mechanism behind "maintain the tool over time as patterns evolve."
+
+### 9.5 `context` is version-parameterized
+
+`agentsync context <path> --as cursor@2.1` vs `--as cursor@2.2` can legitimately differ.
+The introspection command (§8) takes an optional version so validation and docs can show
+behavior for a specific release, not just "latest."
+
+---
+
+## 10. Decisions (resolved)
 
 1. **Sync model** — ✅ **bidirectional**, via a lockfile-based 3-way merge (§2). Any file
    may be edited; edits propagate; divergent edits to the same block are conflicts resolved
