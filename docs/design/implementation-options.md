@@ -139,11 +139,11 @@ Requirement: harness drives the **built binary** as a black box.
 
 | Option | Notes |
 | --- | --- |
-| **Exec-the-binary runner over `spec/*/` trees** ✅ | Copies `input/` to temp dir, runs `agentsync …`, compares result tree to `expected/` and stdout/exit to `expected-report.txt`. Written in Go now but only talks to CLI via subprocess — swappable. |
+| **Exec-the-binary runner over `spec/*/` trees** ✅ | Copies `base/` to temp dir, runs `sync` to generate the lock, overlays `edit/`, runs the command, compares result tree to `expected/` and report/exit to `report.json`. Talks to the CLI only via subprocess — swappable. |
 | `rogpeppe/go-testscript` (txtar) | Great for CLI tests, but Go-coupled; single-file txtar fights multi-file trees. |
 | Bats / shell | Language-neutral, but weak tree-diffing and Windows story. |
 
-**Recommendation: small exec-based runner** (Go now) treating the binary as opaque. Fixtures carry `input/` (working files + `agentsync.lock` base), `expected/`, `expected-report.txt`, `intent.md`.
+**Recommendation: small exec-based runner** (Go now) treating the binary as opaque. Fixtures carry `base/` (Given), `edit/` (When), `expected/` + `report.json` (Then), `intent.md` — no hand-authored lockfiles (hashes would rot; the runner generates the lock by syncing `base/`). Hermetic: never invokes real agent CLIs (that's the separate conformance probe, design §9.4).
 
 ---
 

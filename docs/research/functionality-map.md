@@ -129,10 +129,10 @@ Cursor is the only harness with an activation concept — its defining feature a
 
 | Direction | Consequence | Rule |
 | --- | --- | --- |
-| Claude → Codex/Cursor/OpenCode | Comment invisible to Claude becomes **visible** to the other agent. | **Drop** block HTML comments so they stay invisible everywhere. |
-| Codex/etc. → Claude | Working content becomes **invisible** (stripped by Claude). | Warn; optionally convert to visible text. |
+| Claude → Codex/Cursor/OpenCode | Comment invisible to Claude becomes **visible** to the other agent. | Never propagate comments across files. |
+| Codex/etc. → Claude | Working content becomes **invisible** (stripped by Claude). | `comment-visibility` lint warns. |
 
-"Copy verbatim" is wrong for any file with comments — the tool must strip/relocate them.
+"Copy verbatim" is wrong for any file with comments. **Bidirectional policy (design §3.1):** comments are *file-local metadata* — excluded from block content hashes, preserved in situ when their file's block is rewritten by a merge, never copied to other files. (A naive "strip everywhere" rule would let one file's winning edit wipe a maintainer note out of another file.)
 
 ### C6 — Escaping / literal vs active
 
@@ -176,6 +176,13 @@ Only **Codex** has a hard cap: `project_doc_max_bytes`, **32 KiB by default** (t
 ### C10 — Remote / URL includes
 
 Only **OpenCode** supports remote instruction URLs (`instructions: ["https://..."]`, 5 s timeout). Remote content is **non-deterministic**, breaking merge/`--check` guarantees. Rule `no-remote-instructions`: in `strict`/CI, reject; else snapshot+pin the fetched content into the lockfile for reproducibility. Converting to other harnesses: fetch once and inline.
+
+### C11 — Consumer overlap / dedup
+
+One file, several consumers — and one consumer reading several files:
+
+- `AGENTS.md` is read by **Codex + OpenCode + Cursor**. It must satisfy the intersection of their capabilities (Codex's floor governs), and a merge conflict "between Codex and OpenCode" cannot exist — one file.
+- **Cursor double-injection trap:** Cursor reads `AGENTS.md` *and* `.cursor/rules/*.mdc`. Mirroring global content into both loads it **twice** in Cursor. Policy (design §2): global blocks → `AGENTS.md` only; `.mdc` emitted only for Cursor-specific features (globs, activation). OpenCode is safe natively (its `AGENTS.md` suppresses `CLAUDE.md`); Claude Code is safe (doesn't read `AGENTS.md`).
 
 ---
 
@@ -280,6 +287,7 @@ Phase 3 renders every `intent.md` + `input → expected` diff into the docs site
 - **[C2/OpenCode]** Whether OpenCode has per-rule "apply to these files" scoping beyond instruction-file globbing.
 - **[C7/Cursor]** Reliability of nested `.cursor/rules/` subdirectories (community reports say flat-only).
 - **[C3/Cursor]** Exact trigger semantics of Agent-Requested (how `description` is used).
+- **[C4/Cursor]** Exact `.mdc` `globs` serialization Cursor accepts (comma-separated string vs YAML list; quoting) — byte-exact emission requires one canonical form.
 
 ## 9. Adjacent surfaces (future scope, not v1)
 

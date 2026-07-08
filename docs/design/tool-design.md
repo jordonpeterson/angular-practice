@@ -44,6 +44,13 @@ The everyday path (one section edited in one file) always propagates cleanly. Co
 
 The IR's interchange format defaults to **`AGENTS.md`** conventions (three of four tools read it natively — research §1), but on disk no file is the "source."
 
+**Merge participants are files, not providers.** Codex, OpenCode, and Cursor all read `AGENTS.md`, so the merge sides are the distinct managed *files* (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/*`, `.claude/rules/*`), each mapped N:1 to the providers that consume it. Consequences:
+- A "conflict between Codex and OpenCode" is impossible — they share one file.
+- A shared file is constrained to the **intersection of its consumers' capabilities** (Codex's feature floor governs `AGENTS.md`).
+- Config ids in `[conflict] priority` are **file ids** (`agents-md`, `claude-md`, `cursor-rules`), not provider ids.
+
+**Emission policy (no double-injection).** Cursor natively reads `AGENTS.md` *and* `.cursor/rules/*.mdc`; emitting global content to both would load it twice in Cursor. Default policy: global blocks live in `AGENTS.md` (+ `CLAUDE.md` for Claude); `.mdc` files are emitted **only** for content needing Cursor-specific features (globs, activation modes). Overridable via `[emit] cursor = "rules-only" | "agents-md-only" | "both"`.
+
 ### 2.1 Conflict resolution
 
 Conflicts are a configurable policy, not a crash. `[conflict] strategy`:
@@ -87,6 +94,8 @@ Block {
 ```
 
 **Block identity.** Each block carries a stable **key** — its heading path, e.g. `Testing / Unit tests`. That key is how the tool knows `## Testing` in `CLAUDE.md` is the same block as `## Testing` in `AGENTS.md`, enabling the 3-way merge (§2). Keys are human-editable and survive across formats. A rename = "old key deleted + new key added"; when ambiguous, fall back to content similarity, else raise a conflict rather than guess.
+
+**Comments are file-local.** `<!-- -->` comments (invisible to Claude, visible to every other agent — functionality-map C5) do **not** participate in the merge: they're excluded from block content hashes, preserved in situ when their file's block is rewritten, and never propagated to other files. A `comment-visibility` lint warns when a comment sits in a file whose consumers would see it.
 
 Imports/includes (`@path`, `opencode.json instructions`, `.cursorrules`) are **resolved and flattened** into blocks on read, then **re-introduced only where the target supports them** on write. Anything a target can't represent becomes a **lossiness diagnostic** (§6), never a silent drop.
 
@@ -134,7 +143,10 @@ compatibility = "portable"                          # off | portable (LCD) | str
 
 [conflict]
 strategy = "fail"                       # fail | priority | markers | newest
-priority = ["agents-md", "claude-code"] # used when strategy = "priority"
+priority = ["agents-md", "claude-md"]   # FILE ids (§2), used when strategy = "priority"
+
+[emit]
+cursor = "rules-only"                   # avoid double-injection: Cursor reads AGENTS.md natively (§2)
 
 [lint]
 claude-md-max-lines      = { level = "error", max = 200 }
@@ -154,7 +166,9 @@ Every rule takes a severity (`off | warn | error`), so the same binary is a soft
 
 The linter runs over the IR + raw files. Two rule families:
 
-**Quality:** `claude-md-max-lines` (200 default), oversized-block, `broken-import`, `out-of-sync` (files disagree, unreconciled — the `--check` gate).
+**Quality:** `claude-md-max-lines` (200 default), oversized-block, `broken-import`, `comment-visibility` (§3.1), `unpropagated-edits` (the `--check` gate).
+
+> **`--check` semantics.** In a bidirectional tool a hand-edit isn't "drift" — it's the intended workflow. `--check` fails whenever **unpropagated edits exist**. Expected consequence: any PR touching a context file fails `--check` until `sync` runs (locally, or by CI in write mode). Document this for users or check-failures read as bugs.
 
 **Compatibility (portable-only):** every entry in research §4's lossiness table becomes a rule. `compatibility = "portable"` → warnings, `"strict"` → errors:
 - `portable-globs-only` — glob isn't a directory prefix, no faithful Codex form.
@@ -175,12 +189,15 @@ spec/
   propagate-single-edit/
     intent.md            # human statement of the requirement (the "why")
     agentsync.toml       # config for this case
-    input/               # working tree: context files (+ agentsync.lock as merge base)
-    expected/            # exact expected tree after sync  (golden)
-    expected-report.txt  # expected diagnostics + exit code
+    base/                # GIVEN: last-synced tree — runner runs `sync` here to GENERATE the lock
+    edit/                # WHEN: overlay applied over base (deletions listed in edit/_delete)
+    expected/            # THEN: exact tree after the command (golden)
+    report.json          # THEN: diagnostics (rule, block, file, severity, fidelity) + exit code
 ```
 
-`input/` carries the working files *and* the `agentsync.lock` base, so a fixture expresses "base said X, someone edited CLAUDE.md to Y → every file becomes Y." Conflict fixtures put divergent edits in two files and assert the chosen `[conflict]` strategy's output.
+The runner never ships hand-authored lockfiles (hashes would rot): it syncs `base/` to produce the lock, overlays `edit/`, then runs the command under test. `base/` absent = first-run (no lockfile). Given/When/Then maps 1:1 onto `base/`/`edit/`/`expected/`. Reports are asserted **structurally** (JSON), so diagnostic wording can change without breaking fixtures; exit codes are exact.
+
+**Exit-code contract:** `0` clean · `1` findings (conflict, lint error, check failure) · `2` usage/config error.
 
 - **Tests:** runner runs `agentsync` on `input/` and asserts `output == expected/` byte-for-byte plus report/exit. Determinism (§4.3) makes this exact.
 - **Spec:** the fixture *is* the requirement; an un-fixtured behavior isn't a requirement.
@@ -246,7 +263,10 @@ When a target is a range (`cursor = ">=2.0"`), the portable/LCD feature set is t
 
 ### 9.4 Conformance probing keeps data honest
 
-Curated data drifts as tools ship. Since the e2e harness already drives the real CLIs as black boxes (§7), the same fixtures double as a **conformance probe**: run an installed version against probe fixtures, observe behavior, emit a capability profile. This (a) self-updates the versioned table from ground truth, and (b) is a **regression alarm** — a scheduled probe against the latest release catches the day behavior changes (the Cursor 3.0.16 case).
+Curated data drifts as tools ship. Two **separate** harnesses — do not conflate:
+
+1. **Fixture runner (§7)** — hermetic. Drives *our* binary only; no agent CLIs, no network, no credentials. Runs on every commit.
+2. **Conformance probe** — scheduled + credentialed. Drives the *real* agent CLIs (real sessions: API keys, cost, nondeterministic output) against probe fixtures, observes which files/blocks actually load, and emits a capability profile. Updates the versioned table from ground truth; acts as a regression alarm (the Cursor 3.0.16 case). Allowed to be flaky; failures open an issue, never block CI. Cursor may not be automatable headlessly at all — its cells may need manual confirmation.
 
 ### 9.5 `context` is version-parameterized
 
