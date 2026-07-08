@@ -58,6 +58,7 @@ Each subsection: syntax per harness, behavioral differences, conversion rule, fi
 
 - **On read:** resolve every include to literal text, flatten into the IR block (also resolves Claude 4-hop chains and Cursor `@Rule` refs). IR holds no unresolved includes.
 - **On write:** emit literal text by default. Re-externalize into a native include only if (a) target supports it losslessly and (b) config opts in (keep `opencode.json` instructions, or Claude `@imports` for humans).
+- **Claude approval trap:** imports pointing outside the project (`@~/...`) trigger a one-time approval dialog; declined = permanently disabled. Tool-emitted imports must stay in-repo or risk silently never loading.
 
 **Conversions**
 
@@ -76,7 +77,7 @@ Each subsection: syntax per harness, behavioral differences, conversion rule, fi
 | **Claude Code** | `.claude/rules/*.md` with `paths:` frontmatter (glob list) | Full glob. Loads only when a matching file is touched. |
 | **Codex** | *(directory nesting only)* | To scope to `src/api`, put `AGENTS.md` **in** `src/api/`. No glob expression. |
 | **Cursor** | `.mdc` `globs:` frontmatter (comma-separated) | Full glob. Drives "Auto Attached." |
-| **OpenCode** | `opencode.json instructions` glob (matches *instruction* files, not scope) | No per-rule "apply to these files" scoping. **[verify]** |
+| **OpenCode** | *(none)* | No per-rule scoping, and **below-cwd `AGENTS.md` is ignored** (walk-up only; issues #6316/#11454) — nested files scope Codex but are invisible to OpenCode. `instructions` globs select always-loaded files, not scope. |
 
 **Asymmetry:** Cursor `globs` ⇄ Claude `paths` is a clean frontmatter rename. Codex has no glob — only physical directory placement.
 
@@ -90,6 +91,7 @@ Each subsection: syntax per harness, behavioral differences, conversion rule, fi
 | Cursor `globs` ⇄ Claude `paths` | Rename frontmatter key; keep patterns. | Lossless |
 | glob → Codex (directory-prefix) | Lower to nested `AGENTS.md` at that dir. | Lossy-recoverable |
 | glob → Codex (non-prefix) | Attach to common-ancestor dir + warn, or drop + warn. | Lossy-degrading |
+| glob → OpenCode (any) | No scoped form: always-on (root/`instructions`) or omit; warn either way. | Lossy-degrading |
 | Codex nested file → glob harness | Synthesize `globs/paths: <dir>/**`. | Lossless |
 
 ### C3 — Activation mode
@@ -125,7 +127,7 @@ Cursor is the only harness with an activation concept — its defining feature a
 
 ### C5 — Hidden / maintainer comments
 
-**A behavioral trap.** Claude Code **strips block-level `<!-- ... -->` HTML comments** before sending to the model. No other harness documents this — Codex, Cursor, OpenCode pass raw markdown, so the agent **sees** the comment.
+**A behavioral trap.** Claude Code **strips block-level `<!-- ... -->` HTML comments** before sending to the model (comments **inside code blocks are preserved**). No other harness documents this — Codex, Cursor, OpenCode pass raw markdown, so the agent **sees** the comment.
 
 | Direction | Consequence | Rule |
 | --- | --- | --- |
@@ -154,7 +156,7 @@ All four support nesting, but merge behavior differs:
 | **Claude Code** | Concatenate; nested file loads **on demand** when a file in that dir is read. |
 | **Codex** | One file per directory (`AGENTS.override.md` > `AGENTS.md` > fallbacks); root→cwd, **closer overrides**. |
 | **Cursor** | Nearest `AGENTS.md` / applicable `.mdc` wins for that subtree. **[verify]** nested `.cursor/rules/` subdirs unreliable — keep `.mdc` flat. |
-| **OpenCode** | Walk up to git root; first match wins per category. |
+| **OpenCode** | Walk **up** to git root only; first match wins per category. **Below-cwd nested files are never loaded** (#6316). |
 
 For the merge engine (design §2), "the `## Build` block for `src/api/`" may live in a different physical file per harness. The IR keys a block by `(scope, heading-path)` so identity survives layout differences.
 
@@ -223,7 +225,7 @@ The `compatibility` config (`off | portable | strict`) sets reaction to anything
 | Capability | Claude Code | Codex | Cursor | OpenCode |
 | --- | --- | --- | --- | --- |
 | C1 Includes | ✅ inline `@` | ❌ | ✅ ref `@` | →cfg `instructions` |
-| C2 Glob scoping | ✅ `paths` | ⚠️ dir-nesting | ✅ `globs` | ⚠️ →cfg |
+| C2 Glob scoping | ✅ `paths` | ⚠️ dir-nesting | ✅ `globs` | ❌ (nested files ignored; `instructions` = always-on) |
 | C3 Activation modes | ⚠️ path-only | ❌ | ✅ 4 modes | ❌ |
 | C4 Frontmatter | ✅ `paths` | ❌ | ✅ 3 fields | ❌ |
 | C5 Hidden comments | ✅ strips `<!-- -->` | ❌ literal | ❌ literal | ❌ literal |
@@ -284,14 +286,17 @@ Phase 3 renders every `intent.md` + `input → expected` diff into the docs site
 ## 8. Verify before shipping
 
 - **[C1/OpenCode]** In-file `@import` inside `AGENTS.md` — confirm support vs. `opencode.json instructions` being the only include path.
-- **[C2/OpenCode]** Whether OpenCode has per-rule "apply to these files" scoping beyond instruction-file globbing.
 - **[C7/Cursor]** Reliability of nested `.cursor/rules/` subdirectories (community reports say flat-only).
 - **[C3/Cursor]** Exact trigger semantics of Agent-Requested (how `description` is used).
 - **[C4/Cursor]** Exact `.mdc` `globs` serialization Cursor accepts (comma-separated string vs YAML list; quoting) — byte-exact emission requires one canonical form.
 
+*(Resolved: OpenCode per-rule scoping — none, and below-cwd discovery — none; issues #6316/#11454.)*
+
 ## 9. Adjacent surfaces (future scope, not v1)
 
-Not in-context-file markdown but part of the broader harness-context story; later phases: MCP server config (`.mcp.json` / `opencode.json` / Codex `config.toml` / Cursor `mcp.json`), slash commands (`.claude/commands/`), subagents (`.claude/agents/`), skills (`.claude/skills/`, Codex skills), hooks. Each is its own mapping project.
+Not in-context-file markdown but part of the broader harness-context story; later phases: MCP server config (`.mcp.json` / `opencode.json` / Codex `config.toml` / Cursor `mcp.json`), slash commands (`.claude/commands/`), subagents (`.claude/agents/`), skills (`.claude/skills/`, Codex skills), hooks, ignore files (`.cursorignore` / `.codeiumignore` / `.aiexclude` — negative context), and Codex's config-side instruction channels (`model_instructions_file`, `developer_instructions`). Each is its own mapping project.
+
+**Never synced (agent-authored memory):** Claude Code auto memory (`~/.claude/projects/<p>/memory/`) and Cursor Memories (sidecar-generated rules, Settings → Rules). These are per-machine learning artifacts, not team instructions — the tool ignores them and lints against committing them.
 
 ---
 

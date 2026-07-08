@@ -79,7 +79,8 @@ untouched; exit 0. *(Flatten-for-merge, restore-on-write.)*
 Given `.cursor/rules/api.mdc` (`globs: src/api/**`, body). When sync (all providers).
 Then `.claude/rules/api.md` with `paths: ["src/api/**"]`; nested `src/api/AGENTS.md` for
 Codex (lowered); root `AGENTS.md` does **not** duplicate the rule (dedup, C11); report:
-`lossy-recoverable` for the Codex lowering; exit 0. *(Every provider's output pinned.)*
+`lossy-recoverable` (Codex) **and** `lossy-degrading` (OpenCode — nested files invisible
+to it, no scoped form); exit 0. *(Every provider's output pinned.)*
 
 **13. c2-nonprefix-glob-warn**
 Given `.cursor/rules/tests.mdc` (`globs: **/*.test.ts`). When sync.

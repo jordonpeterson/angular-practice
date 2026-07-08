@@ -34,7 +34,7 @@ Core question: *"For concept X in provider P, what is the equivalent in Q?"*
 | **Personal / local (uncommitted)** | `CLAUDE.local.md` (gitignore) | `AGENTS.override.md` | `.cursor/rules/*.mdc` (gitignored) | — (use global) |
 | **User / global (all projects)** | `~/.claude/CLAUDE.md`, `~/.claude/rules/*.md` | `~/.codex/AGENTS.md` | Cursor Settings → User Rules (UI, not a repo file) | `~/.config/opencode/AGENTS.md` |
 | **Org / managed policy** | `/etc/claude-code/CLAUDE.md` (Linux), macOS/Windows paths; `managed-settings.json` `claudeMd` | — | Team Rules (dashboard) | — |
-| **Nested / subdir scoping** | Nested `CLAUDE.md` (loaded on demand) | Nested `AGENTS.md` / `AGENTS.override.md` | Nested `AGENTS.md` or nested `.cursor/rules/` | Nested `AGENTS.md` / `CLAUDE.md` |
+| **Nested / subdir scoping** | Nested `CLAUDE.md` (loaded on demand) | Nested `AGENTS.md` / `AGENTS.override.md` | Nested `AGENTS.md` or nested `.cursor/rules/` | ❌ **below-cwd files ignored** (walk-up only) |
 | **Path/glob-scoped rules** | `.claude/rules/*.md` with `paths:` frontmatter | ❌ (nesting only) | `.cursor/rules/*.mdc` with `globs:` frontmatter | via `opencode.json` `instructions` globs |
 | **Include other files** | `@path` imports (max 4 hops) | ❌ (concatenation only) | `@rule` references / `@file` | `opencode.json` `instructions` array (globs + URLs) |
 | **Legacy format still read** | — | fallbacks: `TEAM_GUIDE.md`, `.agents.md` | `.cursorrules` (deprecated) | `CLAUDE.md` |
@@ -79,8 +79,11 @@ Core question: *"For concept X in provider P, what is the equivalent in Q?"*
   ```
 
 - **`AGENTS.md` compatibility:** not read directly. Use `@AGENTS.md` import or `ln -s AGENTS.md CLAUDE.md`. `/init` reads existing `AGENTS.md` (plus `.cursorrules`, `.devin/rules/`, `.windsurfrules`) into a generated `CLAUDE.md`.
+- **External-import approval:** first time a project's imports reference files outside it (e.g. `@~/...`), Claude shows an approval dialog; **declining disables those imports permanently** (no re-prompt). Tool-emitted external imports may silently never load — prefer in-repo targets.
+- **Worktrees:** gitignored `CLAUDE.local.md` exists only in the worktree that created it; official workaround is importing `@~/.claude/<project>.md`.
+- **Compaction:** after `/compact`, root `CLAUDE.md` is re-injected automatically; nested ones reload only on next file-read in their subtree (matters for effective-context modeling).
 - **Not context:** *Auto memory* at `~/.claude/projects/<project>/memory/MEMORY.md` is Claude-authored — sync tool should ignore it.
-- **Exclusions:** `claudeMdExcludes` (glob) skips ancestor `CLAUDE.md` files in monorepos.
+- **Exclusions:** `claudeMdExcludes` (glob) skips ancestor `CLAUDE.md` files; `--add-dir` dirs load memory only with `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`.
 
 ### 3.2 OpenAI Codex — `AGENTS.md`
 
@@ -89,7 +92,8 @@ Core question: *"For concept X in provider P, what is the equivalent in Q?"*
 - **Scopes:** Global `~/.codex/AGENTS.md` (+ `~/.codex/AGENTS.override.md`); project + nested `AGENTS.md` at root and any subdirectory.
 - **Loading:** walk **root → cwd**, one file per directory, **concatenated** (blank-line joined). Files closer to cwd appear later and override. `AGENTS.override.md` beats that directory's `AGENTS.md`.
 - **Size limit:** capped by `project_doc_max_bytes` (~32 KiB default; set in `~/.codex/config.toml`). Empty files skipped; once cap hit, no more files added. **Hard constraint** — a large `CLAUDE.md` can silently truncate when converted.
-- **Config file:** `~/.codex/config.toml` holds `project_doc_max_bytes`, `project_doc_fallback_filenames`, etc. Configures discovery; not itself context.
+- **Config file:** `~/.codex/config.toml` holds `project_doc_max_bytes`, `project_doc_fallback_filenames`, etc. A **project-level `.codex/config.toml`** also exists (relative paths resolve against its `.codex/` folder). Configures discovery; not itself context.
+- **Other instruction channels:** `model_instructions_file` (formerly `experimental_instructions_file`) *replaces built-in instructions*, not `AGENTS.md`; `developer_instructions` injects extra instruction text via config. Both are config-side, out of the sync surface, but the tool should detect and warn (`foreign-instruction-channel`).
 - **No glob rules, no imports** — pure file nesting + overrides. Biggest gap when converting Cursor `.mdc` → Codex.
 
 ### 3.3 Cursor — `.cursor/rules/*.mdc` (+ `AGENTS.md`)
@@ -123,14 +127,17 @@ Richest and most structured.
 
 - **Scopes / precedence:** Team Rules (dashboard) → Project Rules (`.cursor/rules/`) → User Rules (Settings UI — plain text, all projects, not a repo file). All applicable rules merge; earlier sources win on conflict.
 - **Nesting:** `.cursor/rules/` can be nested, but idiomatic pattern keeps rules central and scopes via `globs`.
+- **Memories** (Cursor 1.0+, Settings → Rules): a sidecar model auto-generates rules from chat, user-approved. Agent-authored — the analogue of Claude auto memory; **never synced** by the tool.
+- **`.cursorignore`** restricts which files the agent may read (hierarchical semantics have known bugs). Negative context — adjacent scope, not synced in v1.
 
 ### 3.4 OpenCode — `AGENTS.md` (+ `opencode.json`)
 
 - **Format:** plain Markdown. `/init` generates it.
 - **Discovery (first match wins per category):**
-  1. **Local:** walk up cwd → git worktree root loading `AGENTS.md` and `CLAUDE.md`; also project `.opencode/`.
+  1. **Local:** walk up cwd → git worktree root loading `AGENTS.md` and `CLAUDE.md`.
   2. **Global:** `~/.config/opencode/AGENTS.md`.
   3. **Claude Code fallback:** `~/.claude/CLAUDE.md` (unless disabled).
+- **Walk-up only — below-cwd files ignored.** OpenCode does **not** load `AGENTS.md` from subdirectories under cwd (auto-discovery is an open feature request, issue #6316); `.opencode/AGENTS.md` is likewise unsupported (issue #11454). **Consequence: a nested `AGENTS.md` scopes content for Codex but is invisible to OpenCode when launched from the repo root** — per-directory scoping is effectively unrepresentable in OpenCode.
 - **Precedence:** if both `AGENTS.md` and `CLAUDE.md` exist, **only `AGENTS.md` is used**. `~/.config/opencode/AGENTS.md` beats `~/.claude/CLAUDE.md`. This Claude compatibility makes OpenCode the easiest target.
 - **`opencode.json` `instructions` field** — pointer/import mechanism accepting local paths, **globs**, and **remote URLs** (5 s fetch timeout), combined with `AGENTS.md`:
 
@@ -154,9 +161,9 @@ Trivially portable — same Markdown body in `CLAUDE.md`, `AGENTS.md`, or a root
 
 | Source | Mechanism | → Target mapping |
 | --- | --- | --- |
-| Cursor `globs: src/**` | `.mdc` frontmatter | → Claude `.claude/rules/x.md` with `paths: ["src/**"]` (clean). → Codex: **lossy** — nested `AGENTS.md` in `src/`, only if glob is a clean directory prefix. → OpenCode: `opencode.json instructions` glob or nested `AGENTS.md`. |
-| Claude `paths:` rule | frontmatter | → Cursor `globs`. → Codex/OpenCode: nested file if directory-shaped. |
-| Codex nested `AGENTS.md` in `src/` | directory nesting | → Cursor `globs: src/**`. → Claude nested `CLAUDE.md` or `paths` rule. |
+| Cursor `globs: src/**` | `.mdc` frontmatter | → Claude `.claude/rules/x.md` with `paths: ["src/**"]` (clean). → Codex: **lossy** — nested `AGENTS.md` in `src/`, only if glob is a clean directory prefix. → OpenCode: **no scoped form** — nested files invisible; content becomes always-on (via root/`instructions`) or is omitted. Lossy-degrading + diagnostic. |
+| Claude `paths:` rule | frontmatter | → Cursor `globs`. → Codex: nested file if directory-shaped. → OpenCode: always-on or omit (see above). |
+| Codex nested `AGENTS.md` in `src/` | directory nesting | → Cursor `globs: src/**`. → Claude nested `CLAUDE.md` or `paths` rule. → OpenCode: **doesn't see it** (shared file, different assembly). |
 
 **Rule of thumb:** glob ⇄ frontmatter is clean between Cursor and Claude Code; converting either into Codex (no glob rules) requires collapsing to directory nesting, only works for directory-prefix globs like `src/api/**`. Arbitrary globs (`**/*.test.ts`) have **no faithful Codex representation** — warn.
 
@@ -190,7 +197,7 @@ Codex's ~32 KiB `project_doc_max_bytes` is the tightest hard cap. Measure the fl
    - Cursor → `.mdc` `globs`
    - Claude Code → `.claude/rules/*.md` `paths`
    - Codex → nested `AGENTS.md` (only if directory-prefix glob; else warn)
-   - OpenCode → nested `AGENTS.md` + `opencode.json instructions`
+   - OpenCode → no scoped form (below-cwd files ignored): always-on via `instructions`, or omit + warn
 4. **Emit a lossiness report** for anything that can't round-trip (arbitrary globs into Codex, Cursor Agent-Requested/Manual modes, size overflow).
 5. **`check` mode** (CI): regenerate in memory, diff against disk, exit non-zero on drift.
 
@@ -198,10 +205,9 @@ Codex's ~32 KiB `project_doc_max_bytes` is the tightest hard cap. Measure the fl
 
 ## 6. Verify before shipping (facts most likely to have drifted)
 
-- Codex `project_doc_max_bytes` default: sources disagree between **32 KiB** and **64 KiB (65536)**. Confirm against the running `codex` version.
-- Codex fallback filename list (`TEAM_GUIDE.md`, `.agents.md`) is configurable and may vary.
-- Cursor's exact precedence wording (Team → Project → User) and whether `AGENTS.md` and `.mdc` rules are additive or exclusive when both exist.
-- OpenCode's "first match wins per category" — confirm whether a project `AGENTS.md` fully suppresses a sibling `CLAUDE.md` or merges.
+- Codex fallback filename list (`TEAM_GUIDE.md`, `.agents.md`) is configurable and may vary. (`project_doc_max_bytes` resolved: **32 KiB default**; `65536` is an override example.)
+- Cursor's exact precedence wording (Team → Project → User) and whether `AGENTS.md` and `.mdc` rules are additive or exclusive when both exist. *(Additive assumed — drives the dedup policy, design §2.)*
+- OpenCode's "first match wins per category" — confirm whether a project `AGENTS.md` fully suppresses a sibling `CLAUDE.md` or merges. (Below-cwd non-discovery resolved: confirmed via issues #6316/#11454.)
 - Claude Code `.claude/rules/` `paths` frontmatter is relatively new; confirm the minimum version your CI targets.
 
 ---
@@ -220,12 +226,15 @@ Codex's ~32 KiB `project_doc_max_bytes` is the tightest hard cap. Measure the fl
 
 **Cursor**
 - [Rules — Cursor Docs](https://cursor.com/docs/context/rules)
+- [Memories — Cursor Docs](https://docs.cursor.com/context/memories)
 - [Cursor Rules: .mdc Frontmatter, globs & alwaysApply — TECHSY](https://techsy.io/en/blog/cursor-rules-guide)
 - [Cursor deprecated .cursorrules — migrate to Project Rules — FlowQL](https://www.flowql.com/en/blog/guides/cursor-rules-deprecated-libraries/)
 
 **OpenCode**
 - [Rules — OpenCode Docs](https://opencode.ai/docs/rules/)
 - [Config — OpenCode Docs](https://opencode.ai/docs/config/)
+- [Context auto-discovery below cwd — opencode issue #6316](https://github.com/anomalyco/opencode/issues/6316)
+- [.opencode/AGENTS.md support — opencode issue #11454](https://github.com/anomalyco/opencode/issues/11454)
 
 **AGENTS.md standard**
 - [AGENTS.md](https://agents.md/)

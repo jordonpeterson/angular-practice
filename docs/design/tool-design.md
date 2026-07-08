@@ -225,7 +225,7 @@ agentsync context <path> --as <harness>     # print the effective, assembled con
 agentsync context <path> --diff             # all harnesses side by side at that path
 ```
 
-It replays each read-adapter plus that harness's assembly rules (walk direction, concat vs override, glob/`paths` matching, on-demand subdir loading — research + §3.1) to produce the fully-resolved context a harness *would* load at `<path>`. Two uses:
+It replays each read-adapter plus that harness's assembly rules (walk direction, concat vs override, glob/`paths` matching, on-demand subdir loading — research + §3.1) to produce the fully-resolved context a harness *would* load at `<path>`. **The same file assembles differently per harness:** a nested `src/api/AGENTS.md` is in-context for Codex at `src/api/x.ts` but invisible to OpenCode (below-cwd files ignored) — the oracle must model per-consumer assembly, not per-file. Two uses:
 
 1. **Validation oracle.** After a sync, effective context at a path should be equivalent across harnesses **modulo declared fidelity losses** (functionality-map §4). A fixture asserts this — "the sync worked" becomes checkable.
 2. **Docs.** Render the compiled context per harness at a location, side by side.
