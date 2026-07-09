@@ -110,9 +110,13 @@ Cursor is the only harness with an activation concept — its defining feature a
 | From → To | Rule | Fidelity |
 | --- | --- | --- |
 | Always / Auto-Attached → any | Map to body / `paths` / nesting per C2. | Lossless / recoverable |
-| Agent-Requested → non-Cursor | Force-include (→ "always") or drop; config picks, either way warn. | Lossy-degrading |
-| Manual → non-Cursor | Drop + diagnostic. | Unrepresentable |
+| Agent-Requested → non-Cursor | **Lower to a skill** (model-invoked via `description` — [context-channels](context-channels.md) §2); fallback: force-include or drop + warn. | Lossy-recoverable |
+| Manual → non-Cursor | **Lower to a skill** with `disable-model-invocation: true` (user-only); fallback: drop + diagnostic. | Lossy-recoverable |
 | any body content → Cursor | Emit as `alwaysApply: true`. | Lossless |
+
+*Skills upgrade both former "unrepresentable" verdicts — all four harnesses share the
+Agent Skills spec, and its invocation flags reproduce Cursor's Manual/Agent-Requested
+semantics. See [context-channels.md](context-channels.md).*
 
 ### C4 — Frontmatter / metadata
 
@@ -294,7 +298,12 @@ Phase 3 renders every `intent.md` + `input → expected` diff into the docs site
 
 ## 9. Adjacent surfaces (future scope, not v1)
 
-Not in-context-file markdown but part of the broader harness-context story; later phases: MCP server config (`.mcp.json` / `opencode.json` / Codex `config.toml` / Cursor `mcp.json`), slash commands (`.claude/commands/`), subagents (`.claude/agents/`), skills (`.claude/skills/`, Codex skills), hooks, ignore files (`.cursorignore` / `.codeiumignore` / `.aiexclude` — negative context), and Codex's config-side instruction channels (`model_instructions_file`, `developer_instructions`). Each is its own mapping project.
+The full channel landscape — **skills, commands, subagents, hooks, memory, config-side
+prompt channels** — is now mapped in [context-channels.md](context-channels.md) (K1–K8
+taxonomy). Skills are the natural v2 sync surface (converged spec, near-lossless);
+hooks/config channels are detect-and-warn. Still unmapped: MCP server config
+(`.mcp.json` / `opencode.json` / Codex `config.toml` / Cursor `mcp.json`) and ignore files
+(`.cursorignore` / `.codeiumignore` / `.aiexclude` — negative context).
 
 **Never synced (agent-authored memory):** Claude Code auto memory (`~/.claude/projects/<p>/memory/`) and Cursor Memories (sidecar-generated rules, Settings → Rules). These are per-machine learning artifacts, not team instructions — the tool ignores them and lints against committing them.
 

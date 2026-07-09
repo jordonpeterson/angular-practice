@@ -27,4 +27,9 @@ $ agentsync diff       # show what would change
 
 Early research. Before writing code, we're mapping how each provider discovers, loads, scopes, and formats its context files — including lossy edges where one provider's feature has no clean equivalent.
 
-**Start here:** [`docs/research/context-file-equivalencies.md`](docs/research/context-file-equivalencies.md)
+**Start here:**
+1. [`docs/research/context-file-equivalencies.md`](docs/research/context-file-equivalencies.md) — where context files live per provider
+2. [`docs/research/functionality-map.md`](docs/research/functionality-map.md) — what in-file syntax does, and conversion rules
+3. [`docs/research/context-channels.md`](docs/research/context-channels.md) — skills, commands, subagents, hooks, memory
+4. [`docs/design/tool-design.md`](docs/design/tool-design.md) — the tool's design
+5. [`docs/spec/top-20-test-cases.md`](docs/spec/top-20-test-cases.md) — the v1 test spec
