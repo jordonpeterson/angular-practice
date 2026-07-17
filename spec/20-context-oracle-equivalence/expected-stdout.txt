@@ -1,0 +1,6 @@
+src/api/handler.ts
+claude-code: Build, api
+codex: Build, api
+cursor: Build, api
+opencode: Build [missing: api — declared loss: opencode-no-scoped-form]
+equivalent (modulo declared losses)

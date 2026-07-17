@@ -1,0 +1,2 @@
+[lint]
+claude-md-max-lines = { level = "error", max = 200 }

@@ -23,6 +23,18 @@ $ agentsync sync       # rewrite all provider files from the canonical source
 $ agentsync diff       # show what would change
 ```
 
+## Running the tests
+
+```
+go test ./test/e2e/ -v
+```
+
+The `spec/` fixtures are the executable spec (Given `base/` + config, When `edit/` +
+`cmd`, Then `expected/` + `report.json`). The CLI is a walking skeleton, so **19 of 20
+fixtures currently fail — by design**: each failure is a missing behavior the
+implementation must turn green. `03-sync-noop-idempotent` passes because a no-op binary
+genuinely satisfies "sync on an in-sync tree writes nothing."
+
 ## Status
 
 Early research. Before writing code, we're mapping how each provider discovers, loads, scopes, and formats its context files — including lossy edges where one provider's feature has no clean equivalent.

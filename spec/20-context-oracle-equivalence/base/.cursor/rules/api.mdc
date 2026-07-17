@@ -1,0 +1,5 @@
+---
+globs: src/api/**
+alwaysApply: false
+---
+Validate inputs with zod.
