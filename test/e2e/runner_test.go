@@ -64,6 +64,11 @@ func TestSpec(t *testing.T) {
 func runFixture(t *testing.T, bin, fixture string) {
 	work := t.TempDir()
 
+	// The fixture's config applies to setup and to the command under test.
+	if data, err := os.ReadFile(filepath.Join(fixture, "agentsync.toml")); err == nil {
+		writeFile(t, filepath.Join(work, "agentsync.toml"), data)
+	}
+
 	// GIVEN: copy base and let the tool produce the lock.
 	base := filepath.Join(fixture, "base")
 	if dirExists(base) {
@@ -185,9 +190,9 @@ func diffTrees(t *testing.T, expected, got string) {
 			t.Errorf("file %s:\n--- got ---\n%s\n--- want ---\n%s", rel, gotData, data)
 		}
 	})
-	// No unexpected extras (lock is tool-internal, never asserted).
+	// No unexpected extras (lock is tool-internal; config is runner-provided).
 	walk(t, got, func(rel string, _ []byte) {
-		if rel == "agentsync.lock" {
+		if rel == "agentsync.lock" || rel == "agentsync.toml" {
 			return
 		}
 		if !seen[rel] {
@@ -252,7 +257,9 @@ func equalDiagnostics(a, b []diagnostic) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	key := func(d diagnostic) string { return d.Rule + "|" + d.Severity + "|" + d.Block + "|" + strings.Join(d.Files, ",") }
+	key := func(d diagnostic) string {
+		return d.Rule + "|" + d.Severity + "|" + d.Block + "|" + strings.Join(d.Files, ",")
+	}
 	as, bs := make([]string, len(a)), make([]string, len(b))
 	for i, d := range a {
 		as[i] = key(d)

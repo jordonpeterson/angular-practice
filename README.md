@@ -30,10 +30,11 @@ go test ./test/e2e/ -v
 ```
 
 The `spec/` fixtures are the executable spec (Given `base/` + config, When `edit/` +
-`cmd`, Then `expected/` + `report.json`). The CLI is a walking skeleton, so **19 of 20
-fixtures currently fail — by design**: each failure is a missing behavior the
-implementation must turn green. `03-sync-noop-idempotent` passes because a no-op binary
-genuinely satisfies "sync on an in-sync tree writes nothing."
+`cmd`, Then `expected/` + `report.json`). **13 of 20 pass**: the bidirectional 3-way
+merge engine (propagation, deletion, imports, comments, escaping, conflicts, rename
+detection, `--check`) is implemented. The remaining 7 stay red by design until their
+features land: Cursor `.mdc` lowering (12–14), lint rules (17–18), migration prune (19),
+and the `context` oracle (20).
 
 ## Status
 
