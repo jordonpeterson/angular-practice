@@ -30,10 +30,11 @@ go test ./test/e2e/ -v
 ```
 
 The `spec/` fixtures are the executable spec (Given `base/` + config, When `edit/` +
-`cmd`, Then `expected/` + `report.json`). **13 of 20 pass**: the bidirectional 3-way
+`cmd`, Then `expected/` + `report.json`). **16 of 20 pass**: the bidirectional 3-way
 merge engine (propagation, deletion, imports, comments, escaping, conflicts, rename
-detection, `--check`) is implemented. The remaining 7 stay red by design until their
-features land: Cursor `.mdc` lowering (12–14), lint rules (17–18), migration prune (19),
+detection, `--check`) and Cursor scoped-rule sync (`globs`↔`paths`, Codex dir-nesting
+lowering, root attachment, activation-mode diagnostics) are implemented. The remaining 4
+stay red by design until their features land: lint rules (17–18), migration prune (19),
 and the `context` oracle (20).
 
 ## Status

@@ -35,12 +35,13 @@ var managed = []fileSpec{
 const absentSentinel = "\x00absent"
 
 type docState struct {
-	spec   fileSpec
-	exists bool
-	raw    []byte
-	order  []string
-	secs   map[string]markdown.Section
-	vals   map[string]string
+	spec     fileSpec
+	exists   bool
+	raw      []byte
+	order    []string
+	secs     map[string]markdown.Section
+	vals     map[string]string
+	ruleSecs map[string]markdown.Section // sections owned by scoped rules (root AGENTS.md)
 }
 
 type verdict struct {
@@ -61,13 +62,21 @@ type side struct {
 func Sync(dir string, check bool) (int, []Diag) {
 	cfg := loadConfig(dir)
 	lk, lockOrder := loadLock(dir)
+	rules := scanRules(dir)
+	owned := ruleNames(rules)
 
 	var docs []*docState
 	for _, spec := range managed {
-		docs = append(docs, readDoc(dir, spec))
+		// Rule-owned sections of the root AGENTS.md belong to the scoped-rule
+		// merge, not the main block merge.
+		exclude := map[string]bool{}
+		if spec.id == "agents-md" {
+			exclude = owned
+		}
+		docs = append(docs, readDoc(dir, spec, exclude))
 	}
 
-	allKeys := mergeOrder(docs, lockOrder)
+	allKeys := mergeOrder(docs, mainOrder(lockOrder))
 	verdicts := map[string]*verdict{}
 	var diags []Diag
 	for _, key := range allKeys {
@@ -75,20 +84,41 @@ func Sync(dir string, check bool) (int, []Diag) {
 	}
 	diags = append(diags, detectRenames(allKeys, verdicts, lk)...)
 
+	outs := make([]markdown.Doc, len(docs))
+	var agentsOut *markdown.Doc
+	var agentsDoc *docState
+	for i, doc := range docs {
+		outs[i] = buildDoc(doc, allKeys, verdicts)
+		if doc.spec.id == "agents-md" {
+			agentsOut, agentsDoc = &outs[i], doc
+		}
+	}
+
+	ruleDiags, ruleWrites, ruleLocks := processRules(dir, rules, lk, agentsOut, agentsDoc.ruleSecs)
+	diags = append(diags, ruleDiags...)
+
 	if check {
 		diags = append(diags, checkDiags(allKeys, verdicts, docs, lk)...)
+		for _, w := range ruleWrites {
+			if cur, err := os.ReadFile(w.path); err != nil || !bytes.Equal(cur, w.data) {
+				diags = append(diags, Diag{Rule: "unpropagated-edits", Severity: "error", Block: w.rule})
+			}
+		}
 		return exitCode(diags), diags
 	}
 
-	for _, doc := range docs {
-		render(dir, doc, allKeys, verdicts)
+	for i, doc := range docs {
+		writeDoc(dir, doc, outs[i])
 	}
-	writeLock(dir, allKeys, verdicts, lk)
+	for _, w := range ruleWrites {
+		writePath(w.path, w.data)
+	}
+	writeLock(dir, allKeys, verdicts, lk, ruleLocks)
 	return exitCode(diags), diags
 }
 
-func readDoc(dir string, spec fileSpec) *docState {
-	d := &docState{spec: spec, secs: map[string]markdown.Section{}, vals: map[string]string{}}
+func readDoc(dir string, spec fileSpec, exclude map[string]bool) *docState {
+	d := &docState{spec: spec, secs: map[string]markdown.Section{}, vals: map[string]string{}, ruleSecs: map[string]markdown.Section{}}
 	data, err := os.ReadFile(filepath.Join(dir, spec.path))
 	if err != nil {
 		return d
@@ -96,11 +126,29 @@ func readDoc(dir string, spec fileSpec) *docState {
 	d.exists = true
 	d.raw = data
 	for _, sec := range markdown.Parse(data).Sections {
+		if exclude[sec.Key] {
+			d.ruleSecs[sec.Key] = sec
+			continue
+		}
 		d.order = append(d.order, sec.Key)
 		d.secs[sec.Key] = sec
 		d.vals[sec.Key] = blockValue(sec, dir)
 	}
 	return d
+}
+
+// mainOrder filters scoped-rule entries out of the lock's block order.
+func mainOrder(lockOrder []string) []string {
+	if lockOrder == nil {
+		return nil
+	}
+	out := make([]string, 0, len(lockOrder))
+	for _, k := range lockOrder {
+		if !strings.HasPrefix(k, "rule:") {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // blockValue is the merge value of a section: imports expanded (so an edit to
@@ -273,7 +321,7 @@ func checkDiags(keys []string, verdicts map[string]*verdict, docs []*docState, l
 	return diags
 }
 
-func render(dir string, doc *docState, keys []string, verdicts map[string]*verdict) {
+func buildDoc(doc *docState, keys []string, verdicts map[string]*verdict) markdown.Doc {
 	var out markdown.Doc
 	for _, key := range keys {
 		v := verdicts[key]
@@ -292,6 +340,10 @@ func render(dir string, doc *docState, keys []string, verdicts map[string]*verdi
 		}
 		out.Sections = append(out.Sections, synthesize(doc, key, v.val))
 	}
+	return out
+}
+
+func writeDoc(dir string, doc *docState, out markdown.Doc) {
 	data := markdown.Serialize(out)
 	if data == nil {
 		return
@@ -299,6 +351,15 @@ func render(dir string, doc *docState, keys []string, verdicts map[string]*verdi
 	if !doc.exists || !bytes.Equal(data, doc.raw) {
 		_ = os.WriteFile(filepath.Join(dir, doc.spec.path), data, 0o644)
 	}
+}
+
+// writePath writes data, creating parent directories, skipping no-op writes.
+func writePath(path string, data []byte) {
+	if cur, err := os.ReadFile(path); err == nil && bytes.Equal(cur, data) {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	_ = os.WriteFile(path, data, 0o644)
 }
 
 // synthesize builds a section from a merged value: @-tokens are escaped for
@@ -350,7 +411,7 @@ func loadLock(dir string) (map[string]string, []string) {
 	return m, order
 }
 
-func writeLock(dir string, keys []string, verdicts map[string]*verdict, old map[string]string) {
+func writeLock(dir string, keys []string, verdicts map[string]*verdict, old map[string]string, extra []lockBlock) {
 	lf := lockFile{Version: 1}
 	for _, key := range keys {
 		v := verdicts[key]
@@ -363,6 +424,7 @@ func writeLock(dir string, keys []string, verdicts map[string]*verdict, old map[
 			lf.Blocks = append(lf.Blocks, lockBlock{key, hashVal(v.val)})
 		}
 	}
+	lf.Blocks = append(lf.Blocks, extra...)
 	data, _ := json.MarshalIndent(lf, "", "  ")
 	data = append(data, '\n')
 	path := filepath.Join(dir, "agentsync.lock")
