@@ -70,6 +70,32 @@ Each subsection: syntax per harness, behavioral differences, conversion rule, fi
 | OpenCode `instructions` glob → all | Expand each matched file inline. | Lossless |
 | any → OpenCode | Inline into `AGENTS.md`, or emit `opencode.json instructions`. | Lossless |
 
+#### C1a — Imports that target another *managed* file (`CLAUDE.md` → `@AGENTS.md`)
+
+Anthropic's recommended bridge (`CLAUDE.md` = `@AGENTS.md` + Claude-specific tail) makes
+one merge participant's content *defined by* another's. Naive inline expansion is wrong:
+the expanded value swallows all of AGENTS.md as one block → phantom divergence, and the
+merge would synthesize literal copies into CLAUDE.md that Claude then loads **twice**
+(import + copy).
+
+**Rule: an import of a managed file is *delegation*, not content.**
+- Detect at read (resolved path ∈ managed set, transitively); do not expand.
+- The delegating file has **no opinion** on the imported blocks: no propagation into it,
+  no lock entries, no conflicts from it. A file only merges blocks it materializes.
+- Sections after the import (the Claude tail) are **provider-local** — never propagated.
+- Never synthesize a block into a file that receives it via delegation (third instance of
+  the C11 dedup pattern).
+- Literal section duplicating an imported key → `duplicate-import-content` lint.
+- The `context` oracle still expands (effective context = AGENTS content + tail).
+- Emission mode `[emit] claude-md = "copy" | "import"`: `copy` mirrors (default);
+  `import` generates the thin delegating form — recommended end-state, since delegation
+  removes the duplication that makes conflicts possible. In-repo import ⇒ no
+  external-import approval dialog; works on Windows, unlike the symlink variant.
+
+Fixture seeds: `c1a-thin-claude-delegates` (edit AGENTS.md → CLAUDE.md untouched),
+`c1a-tail-is-provider-local`, `c1a-duplicate-import-content-lint`,
+`c1a-emit-import-mode`.
+
 ### C2 — Path / glob scoping
 
 | Harness | Syntax | Notes |
