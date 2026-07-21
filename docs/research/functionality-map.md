@@ -96,6 +96,34 @@ Fixture seeds: `c1a-thin-claude-delegates` (edit AGENTS.md → CLAUDE.md untouch
 `c1a-tail-is-provider-local`, `c1a-duplicate-import-content-lint`,
 `c1a-emit-import-mode`.
 
+#### C1b — Import cycles among managed files
+
+If managed files reference each other in a circle (`CLAUDE.md → @AGENTS.md`,
+`AGENTS.md → @CLAUDE.md`, `.mdc @file` refs, `opencode.json instructions` edges), the
+repo is degenerate **before the tool runs** — and differently per consumer, since each
+harness interprets the same edge differently: Claude expands (nested duplication up to
+its 4-hop cap), Codex reads the `@` line as literal noise, Cursor attach-references
+ping-pong. Under C1a's rule ("a file only merges blocks it materializes"), a cycle means
+**everyone delegates and nobody materializes** — the merge has no fixpoint.
+
+**Rules:**
+- Build the reference graph over managed files (all edge kinds: `@` imports, `.mdc`
+  `@file`, `instructions`) and detect cycles explicitly. The expansion depth cap makes
+  cycles *terminate*; it must never be the detection mechanism (it silently yields
+  nested-duplication garbage).
+- `import-cycle`: error, non-downgradeable. Sync and `--check` exit 1, nothing written,
+  diagnostic names the full cycle path. Cycles among non-managed imported docs get the
+  same treatment at the expansion layer.
+- **Repair is prescribed by the capability gradient:** reference chains must terminate at
+  the least-capable consumer, so `AGENTS.md` (Codex: no expansion) must be the
+  materialized sink; import-capable files point toward it, never away. Delegation edges
+  are valid only pointing down the gradient; the graph must be a DAG with materialized
+  sinks. The diagnostic states the concrete edge to remove.
+
+Fixture seeds: `c1b-import-cycle-error` (two-file cycle → exit 1, cycle path in report,
+no writes), `c1b-cycle-via-instructions` (opencode.json edge closes the loop),
+`c1b-nonmanaged-import-cycle` (docs/a.md ↔ docs/b.md).
+
 ### C2 — Path / glob scoping
 
 | Harness | Syntax | Notes |
