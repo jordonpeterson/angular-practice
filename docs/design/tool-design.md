@@ -70,7 +70,24 @@ Because conflicts key on blocks, a conflict in `## Testing` never blocks clean p
 
 ## 3. Architecture
 
-Three-stage pipeline over a shared IR: **read adapters** (`CLAUDE.md`, `AGENTS.md`, `*.mdc`, `opencode.json`, `.cursorrules`) → **canonical IR** (also feeds the lint engine §6) → **write adapters**.
+Five components. The e2e framework (1) drives the binary as a black box and never sees the
+rest. Per-harness **adapters** are generator+emitter pairs; the engine is harness-agnostic.
+
+| # | Component | Role |
+| --- | --- | --- |
+| 1 | **e2e framework** | implementation-blind fixture runner (§7); unchanged by internals |
+| 2 | **Context Graph Generators** (per harness) | read files → source blocks + compiled projection (§3.1a); also powers `context` and the conformance probe |
+| 3 | **Equivalence Engine** | graph diff modulo loss edges + 3-way decisions + write planning; sees only graphs, delegates writing to per-harness **emitters** |
+| 4 | **Config** (`agentsync.toml`, §5) | optionality: target harnesses, conflict strategy/priority, emit/dedup policy, lint severities |
+| 5 | **Lockfile** (`agentsync.lock`, §4.2) | merge base — decides *direction* mechanically for the common case |
+
+**Division of labor:** the lock decides *direction* (which side changed since last sync —
+no config consulted); config priority only breaks genuine ties (both sides changed the
+same block divergently). Without the lock, every difference would be a "conflict" and
+priority would degrade the tool to one-directional overwrite.
+
+**The loop:** engine output re-runs through the generators on the planned tree — the
+verified-writes postcondition (§3.1b) is part of the component picture, not an afterthought.
 
 ### 3.1 The IR (the crux)
 
