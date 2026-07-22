@@ -70,7 +70,24 @@ Because conflicts key on blocks, a conflict in `## Testing` never blocks clean p
 
 ## 3. Architecture
 
-Three-stage pipeline over a shared IR: **read adapters** (`CLAUDE.md`, `AGENTS.md`, `*.mdc`, `opencode.json`, `.cursorrules`) → **canonical IR** (also feeds the lint engine §6) → **write adapters**.
+Five components. The e2e framework (1) drives the binary as a black box and never sees the
+rest. Per-harness **adapters** are generator+emitter pairs; the engine is harness-agnostic.
+
+| # | Component | Role |
+| --- | --- | --- |
+| 1 | **e2e framework** | implementation-blind fixture runner (§7); unchanged by internals |
+| 2 | **Context Graph Generators** (per harness) | read files → source blocks + compiled projection (§3.1a); also powers `context` and the conformance probe |
+| 3 | **Equivalence Engine** | graph diff modulo loss edges + 3-way decisions + write planning; sees only graphs, delegates writing to per-harness **emitters** |
+| 4 | **Config** (`agentsync.toml`, §5) | optionality: target harnesses, conflict strategy/priority, emit/dedup policy, lint severities |
+| 5 | **Lockfile** (`agentsync.lock`, §4.2) | merge base — decides *direction* mechanically for the common case |
+
+**Division of labor:** the lock decides *direction* (which side changed since last sync —
+no config consulted); config priority only breaks genuine ties (both sides changed the
+same block divergently). Without the lock, every difference would be a "conflict" and
+priority would degrade the tool to one-directional overwrite.
+
+**The loop:** engine output re-runs through the generators on the planned tree — the
+verified-writes postcondition (§3.1b) is part of the component picture, not an afterthought.
 
 ### 3.1 The IR (the crux)
 
@@ -98,6 +115,48 @@ Block {
 **Comments are file-local.** `<!-- -->` comments (invisible to Claude, visible to every other agent — functionality-map C5) do **not** participate in the merge: they're excluded from block content hashes, preserved in situ when their file's block is rewritten, and never propagated to other files. A `comment-visibility` lint warns when a comment sits in a file whose consumers would see it.
 
 Imports/includes (`@path`, `opencode.json instructions`, `.cursorrules`) are **resolved and flattened** into blocks on read, then **re-introduced only where the target supports them** on write. Anything a target can't represent becomes a **lossiness diagnostic** (§6), never a silent drop.
+
+### 3.1a The context graph (planner + verifier in one structure)
+
+The IR is one side of a **provenance graph** with two projections:
+
+- **Source layer:** files → blocks they carry (the §3.1 IR).
+- **Compiled layer:** per (harness × location), the effective context as an ordered list
+  of parts — each part edged back to the source block that produced it.
+
+Edges are **typed**, and sync policy attaches to edge types, not files:
+
+| Edge | Meaning | Merge behavior |
+| --- | --- | --- |
+| `materializes` | file owns the block (root `CLAUDE.md`/`AGENTS.md`) | full participant |
+| `delegates` | thin import of a managed file (C1a) | no opinion; never synthesized into |
+| `generates` | lowered artifact (nested `AGENTS.md` from `.mdc`) | **backflow policy**: edits flow back to source, or are frozen (drift error) — configurable |
+| `attaches-degraded` | lossy lowering (non-prefix glob at root) | participant, carries fidelity label |
+| *(absent edge)* | unrepresentable, labeled: `no-edge(reason, fidelity)` | not a diff — a **declared loss** |
+
+Consequences:
+- **Losses are structural, not textual.** A `*.ts`-scoped rule simply has no edge into
+  OpenCode's compiled context, labeled `opencode-no-scoped-form`. Equivalence = per-harness
+  graphs isomorphic **after ignoring loss-labeled absent edges** — the "modulo declared
+  losses" is carried by the graph, machine-checkable, never a side list that drifts.
+- **Write-back is edge-following**, surgical by construction — never regeneration from
+  flattened text.
+- C1a is the `delegates` edge type; C1b is "the source projection must be a DAG";
+  the emission/dedup policy (§2) decides *which edges exist*.
+- Unchanged: block identity (heading keys), the lockfile 3-way change detection (hashes on
+  nodes), canonical serialization. The graph is where policy lives, not a replacement for it.
+- Implementation: two tables + an edge list (`Block`, `CompiledPart{harness, location,
+  blockRef, transform, lossLabel}`), not graph-database machinery.
+
+### 3.1b Verified writes (compiled-equivalence postcondition)
+
+Every `sync` ends by rebuilding the compiled layer from the planned writes and checking
+graph equivalence (above). Not equivalent → the sync itself is buggy: refuse to write,
+report the compiled diff. This turns bug classes like double-injection, rule/section
+collisions, and check-vs-sync divergence from "hope a fixture catches it" into a
+postcondition checked on every run. Corollaries: the `context` machinery is a core engine
+dependency (built early, not last); `--check` gains a semantic layer (compiled-space
+drift); human-facing reports render in compiled space ("what will Codex actually see").
 
 ### 3.2 Adapters = maintainability
 

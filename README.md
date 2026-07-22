@@ -1,27 +1,36 @@
 # agentsync
 
-> Working name (subject to change). CLI that keeps AI coding-agent context files in sync across providers.
+> Working name (subject to change). CLI that keeps AI coding-agent context files in sync
+> across providers — bidirectionally.
 
 ## The problem
 
-Each AI coding agent reads its own context file:
+Each AI coding agent reads its own context files:
 
-- **Claude Code**: `CLAUDE.md`
-- **OpenAI Codex**: `AGENTS.md`
-- **Cursor**: `.cursor/rules/*.mdc` (plus `AGENTS.md` and legacy `.cursorrules`)
-- **OpenCode**: `AGENTS.md` (falls back to `CLAUDE.md`)
+- **Claude Code**: `CLAUDE.md`, `.claude/rules/*.md`
+- **OpenAI Codex**: `AGENTS.md` (root + nested)
+- **Cursor**: `.cursor/rules/*.mdc` (plus `AGENTS.md`)
+- **OpenCode**: `AGENTS.md`
 
-Teams using more than one hand-maintain the same guidance across files and formats. They drift: edit `CLAUDE.md`, forget `AGENTS.md`, and the agents disagree.
+Teams using more than one hand-maintain the same guidance across formats. They drift:
+edit `CLAUDE.md`, forget `AGENTS.md`, and the agents disagree.
 
-## The goal
+## How it works
 
-A CLI for local and CI use. When one provider's context file changes, `agentsync` regenerates the equivalents for every other provider — respecting each tool's format, path conventions, and scoping.
+No file is privileged. Edit whichever context file you like; `agentsync` reconciles the
+rest via a lockfile-based 3-way block merge, converting formats per each harness's real
+semantics (imports, glob scoping, comment stripping, size caps — see the research docs).
 
 ```
-$ agentsync check      # CI gate: fail if context files are out of sync
-$ agentsync sync       # rewrite all provider files from the canonical source
-$ agentsync diff       # show what would change
+$ agentsync sync           # reconcile all managed files (bidirectional)
+$ agentsync sync --check   # CI gate: exit 1 if unpropagated edits exist
+$ agentsync lint           # best-practice + portability rules
+$ agentsync context <path> # show the effective context each harness loads at a path
 ```
+
+Architecture (design §3): **e2e framework** (implementation-blind) · **context graph
+generators** (per harness) · **equivalence engine** (harness-agnostic, graph-based) ·
+**config** (`agentsync.toml`) · **lockfile** (`agentsync.lock`, the merge base).
 
 ## Running the tests
 
@@ -29,21 +38,15 @@ $ agentsync diff       # show what would change
 go test ./test/e2e/ -v
 ```
 
-The `spec/` fixtures are the executable spec (Given `base/` + config, When `edit/` +
-`cmd`, Then `expected/` + `report.json`). **16 of 20 pass**: the bidirectional 3-way
-merge engine (propagation, deletion, imports, comments, escaping, conflicts, rename
-detection, `--check`) and Cursor scoped-rule sync (`globs`↔`paths`, Codex dir-nesting
-lowering, root attachment, activation-mode diagnostics) are implemented. The remaining 4
-stay red by design until their features land: lint rules (17–18), migration prune (19),
-and the `context` oracle (20).
+`spec/` is the executable spec (Given `base/` + config, When `edit/` + `cmd`, Then
+`expected/` + `report.json`). Currently **16 of 20 pass**; the rest are red until their
+features land. Implementation work is queued in [`Tasks.md`](Tasks.md).
 
-## Status
+## Docs
 
-Early research. Before writing code, we're mapping how each provider discovers, loads, scopes, and formats its context files — including lossy edges where one provider's feature has no clean equivalent.
-
-**Start here:**
 1. [`docs/research/context-file-equivalencies.md`](docs/research/context-file-equivalencies.md) — where context files live per provider
-2. [`docs/research/functionality-map.md`](docs/research/functionality-map.md) — what in-file syntax does, and conversion rules
+2. [`docs/research/functionality-map.md`](docs/research/functionality-map.md) — what in-file syntax does; conversion rules and fidelity
 3. [`docs/research/context-channels.md`](docs/research/context-channels.md) — skills, commands, subagents, hooks, memory
-4. [`docs/design/tool-design.md`](docs/design/tool-design.md) — the tool's design
-5. [`docs/spec/top-20-test-cases.md`](docs/spec/top-20-test-cases.md) — the v1 test spec
+4. [`docs/design/tool-design.md`](docs/design/tool-design.md) — architecture and semantics
+5. [`docs/design/implementation-options.md`](docs/design/implementation-options.md) — Go stack choices
+6. [`docs/spec/top-20-test-cases.md`](docs/spec/top-20-test-cases.md) — the v1 test spec

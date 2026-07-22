@@ -168,20 +168,22 @@ Generator walks `spec/`, renders per fixture `intent.md` + `input → expected` 
 
 ```
 agentsync/
-  cmd/agentsync/        # main, cobra commands: sync, lint, context
+  cmd/agentsync/        # main; commands: sync, lint, context
   internal/
     markdown/           # scanner: bytes <-> heading-keyed segments + frontmatter
-    ir/                 # Block, Document, Scope, Activation, Layer
-    adapter/            # Reader/Writer + registry; capability table
+    graph/              # Block, CompiledPart, typed edges, loss labels (design §3.1a)
+    adapter/            # per-harness generator (files -> graph) + emitter (graph -> files)
       claudecode/  codex/  cursor/  opencode/
-    merge/              # 3-way block merge + lockfile
-    lint/               # rule engine (quality + compatibility)
-    contextcmd/         # effective-context assembly per harness
+    merge/              # equivalence engine: 3-way decisions + lockfile + verified writes
+    lint/               # rule registry (quality + compatibility severities)
     config/             # agentsync.toml
   spec/                 # fixtures (tests + docs source)
-  test/e2e/             # exec-based runner
-  docs/                 # (this)
+  test/e2e/             # exec-based runner (implementation-blind)
+  docs/                 # research + design
 ```
+
+*(The `context` command needs no package of its own — it prints the generators' compiled
+projection.)*
 
 ---
 
